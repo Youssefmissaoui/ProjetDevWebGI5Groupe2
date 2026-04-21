@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Ajouter un objet{% endblock %}
+
+{% block content %}
+<div class="form-card">
+    <h2>Ajouter un objet connecté</h2>
+
+    <form method="POST">
+        <input type="text" name="name" placeholder="Nom de l'objet" required>
+
+        <select name="type" required>
+            <option value="">Choisir le type</option>
+            <option value="light">Lumière</option>
+            <option value="tv">Télévision</option>
+        </select>
+
+        <input type="text" name="location" placeholder="Emplacement / pièce" required>
+
+        <select name="condition_state" required>
+            <option value="">Choisir la condition</option>
+            <option value="bon_etat">Bon état</option>
+            <option value="nouveau">Nouveau</option>
+            <option value="fragile">Fragile</option>
+            <option value="en_panne">En panne</option>
+        </select>
+
+        <button type="submit" class="btn btn-green full">Ajouter</button>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Accueil{% endblock %}
+
+{% block content %}
+<div class="hero-card">
+    <h1>Bienvenue dans votre maison intelligente</h1>
+    <p>
+        Contrôlez vos objets connectés de manière sécurisée.
+    </p>
+
+    {% if not session.get('user_id') %}
+        <div class="hero-actions">
+            <a href="{{ url_for('login') }}" class="btn btn-blue">Se connecter</a>
+            <a href="{{ url_for('register') }}" class="btn btn-green">Créer un compte</a>
+        </div>
+
+        <p class="small-note">
+            Compte admin par défaut : admin@smarthome.com / Admin@123
+        </p>
+    {% else %}
+        <div class="hero-actions">
+            {% if session.get('role') == 'admin' %}
+                <a href="{{ url_for('admin_dashboard') }}" class="btn btn-blue">Accéder au dashboard admin</a>
+            {% else %}
+                <a href="{{ url_for('user_dashboard') }}" class="btn btn-blue">Voir mes objets</a>
+            {% endif %}
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

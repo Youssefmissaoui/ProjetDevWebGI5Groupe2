@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Dashboard admin{% endblock %}
+
+{% block content %}
+<div class="section-card">
+    <h2>Bienvenue {{ session.get('full_name') }}</h2>
+    <div class="top-actions">
+        <a href="{{ url_for('add_device') }}" class="btn btn-green">Ajouter un objet</a>
+    </div>
+</div>
+
+<div class="section-card">
+    <h3>Comptes en attente de validation</h3>
+    {% if pending_users %}
+        <table class="table">
+            <tr>
+                <th>Prénom</th>
+                <th>Nom</th>
+                <th>Email</th>
+                <th>Âge</th>
+                <th>Action</th>
+            </tr>
+            {% for user in pending_users %}
+            <tr>
+                <td>{{ user.first_name }}</td>
+                <td>{{ user.last_name }}</td>
+                <td>{{ user.email }}</td>
+                <td>{{ user.age }}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('approve_user', user_id=user.id) }}" class="inline-form">
+                        <button type="submit" class="btn btn-green small-btn">Valider</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('reject_user', user_id=user.id) }}" class="inline-form">
+                        <button type="submit" class="btn btn-red small-btn">Refuser</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>Aucun compte en attente.</p>
+    {% endif %}
+</div>
+
+<div class="section-card">
+    <h3>Utilisateurs actifs</h3>
+    {% if approved_users %}
+        <table class="table">
+            <tr>
+                <th>Prénom</th>
+                <th>Nom</th>
+                <th>Email</th>
+                <th>Action</th>
+            </tr>
+            {% for user in approved_users %}
+            <tr>
+                <td>{{ user.first_name }}</td>
+                <td>{{ user.last_name }}</td>
+                <td>{{ user.email }}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('block_user', user_id=user.id) }}" class="inline-form">
+                        <button type="submit" class="btn btn-red small-btn">Bloquer</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>Aucun utilisateur actif.</p>
+    {% endif %}
+</div>
+
+<div class="section-card">
+    <h3>Utilisateurs bloqués</h3>
+    {% if blocked_users %}
+        <table class="table">
+            <tr>
+                <th>Prénom</th>
+                <th>Nom</th>
+                <th>Email</th>
+                <th>Action</th>
+            </tr>
+            {% for user in blocked_users %}
+            <tr>
+                <td>{{ user.first_name }}</td>
+                <td>{{ user.last_name }}</td>
+                <td>{{ user.email }}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('unblock_user', user_id=user.id) }}" class="inline-form">
+                        <button type="submit" class="btn btn-blue small-btn">Débloquer</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>Aucun utilisateur bloqué.</p>
+    {% endif %}
+</div>
+
+<div class="section-card">
+    <h3>Objets ajoutés</h3>
+    {% if devices %}
+        <div class="device-grid">
+            {% for device in devices %}
+            <div class="device-card">
+                <h4>{{ device.name }}</h4>
+                <p><strong>Type :</strong> {{ device.type }}</p>
+                <p><strong>Lieu :</strong> {{ device.location }}</p>
+                <p><strong>État :</strong> {{ device.state }}</p>
+                <p><strong>Condition :</strong> {{ device.condition_state }}</p>
+
+                {% if device.type == 'tv' %}
+                    <p><strong>Chaîne :</strong> {{ device.current_channel }}</p>
+                {% endif %}
+
+                <div class="card-actions">
+                    <a href="{{ url_for('edit_device', device_id=device.id) }}" class="btn btn-blue small-btn">
+                        Modifier
+                    </a>
+
+                    <form method="POST" action="{{ url_for('delete_device', device_id=device.id) }}" class="inline-form">
+                        <button type="submit" class="btn btn-red small-btn">
+                            Supprimer
+                        </button>
+                    </form>
+
+                    {% if device.type == 'light' %}
+                        <a href="{{ url_for('light_control', device_id=device.id) }}" class="btn btn-green small-btn">
+                            Contrôler
+                        </a>
+                    {% elif device.type == 'tv' %}
+                        <a href="{{ url_for('tv_control', device_id=device.id) }}" class="btn btn-orange small-btn">
+                            Contrôler
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p>Aucun objet pour le moment.</p>
+    {% endif %}
+</div>
+{% endblock %}

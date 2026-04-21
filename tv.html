@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Contrôle télévision{% endblock %}
+
+{% block content %}
+<div class="control-card">
+    <h2>{{ device.name }}</h2>
+    <p><strong>Pièce :</strong> {{ device.location }}</p>
+    <p><strong>Condition :</strong> {{ device.condition_state }}</p>
+
+    <div class="tv-visuals">
+        <div class="tv-screen">
+            {% if device.state == 'on' %}
+                <img src="{{ url_for('static', filename='images/tv_on.png') }}" alt="TV allumée" class="tv-image">
+            {% else %}
+                <img src="{{ url_for('static', filename='images/tv_off.png') }}" alt="TV éteinte" class="tv-image">
+            {% endif %}
+        </div>
+
+        <div class="remote-box">
+            <img src="{{ url_for('static', filename='images/remote.png') }}" alt="Télécommande" class="remote-image">
+        </div>
+    </div>
+
+    <div class="status-box">
+        <p><strong>État :</strong>
+            {% if device.state == 'on' %}
+                <span class="state-on">Allumée</span>
+            {% else %}
+                <span class="state-off">Éteinte</span>
+            {% endif %}
+        </p>
+        <p><strong>Chaîne actuelle :</strong> {{ device.current_channel }}</p>
+    </div>
+
+    {% if not allowed %}
+        <div class="warning-box">{{ reason }}</div>
+    {% else %}
+        <div class="actions tv-actions">
+            {% if device.state == 'off' %}
+                <form method="POST">
+                    <input type="hidden" name="action" value="on">
+                    <button type="submit" class="btn btn-green">Allumer</button>
+                </form>
+            {% else %}
+                <form method="POST">
+                    <input type="hidden" name="action" value="off">
+                    <button type="submit" class="btn btn-red">Éteindre</button>
+                </form>
+
+                <form method="POST">
+                    <input type="hidden" name="action" value="channel_up">
+                    <button type="submit" class="btn btn-blue">Chaîne +</button>
+                </form>
+
+                <form method="POST">
+                    <input type="hidden" name="action" value="channel_down">
+                    <button type="submit" class="btn btn-orange">Chaîne -</button>
+                </form>
+            {% endif %}
+        </div>
+    {% endif %}
+
+    <a href="{{ url_for('home') }}" class="btn btn-dark">Retour</a>
+</div>
+{% endblock %}

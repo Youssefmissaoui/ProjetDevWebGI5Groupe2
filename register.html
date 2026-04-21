@@ -1,61 +1,85 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Register</title>
-  <style>
-    body {
-      font-family: Arial;
-      background: #eef2f7;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-    }
+{% extends "base.html" %}
+{% block title %}Inscription{% endblock %}
 
-    .box {
-      background: white;
-      padding: 30px;
-      border-radius: 10px;
-      box-shadow: 0 0 10px rgba(0,0,0,0.2);
-      width: 300px;
-      text-align: center;
-    }
+{% block content %}
+<div class="form-card">
+    <h2>Créer un compte</h2>
 
-    input {
-      width: 100%;
-      padding: 10px;
-      margin: 10px 0;
-      border-radius: 5px;
-      border: 1px solid #ccc;
-    }
+    <form method="POST" id="registerForm" novalidate>
+        <div class="grid-2">
+            <input type="text" name="first_name" placeholder="Prénom" required>
+            <input type="text" name="last_name" placeholder="Nom" required>
+        </div>
 
-    button {
-      width: 100%;
-      padding: 10px;
-      background: #28a745;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-    }
+        <label class="label">Date de naissance</label>
+        <input type="date" name="birth_date" required>
 
-    button:hover {
-      background: #1e7e34;
-    }
-  </style>
-</head>
+        <input type="email" name="email" placeholder="Email" required>
 
-<body>
+        <input type="password" id="password" name="password" placeholder="Mot de passe" required>
+        <input type="password" id="confirm_password" name="confirm_password" placeholder="Confirmer le mot de passe" required>
 
-<div class="box">
-  <h2>Register</h2>
+        <div class="password-rules-live">
+            <strong>Règles du mot de passe :</strong>
+            <ul>
+                <li id="rule-length" class="invalid">Au moins 8 caractères</li>
+                <li id="rule-uppercase" class="invalid">Au moins 1 majuscule</li>
+                <li id="rule-digit" class="invalid">Au moins 1 chiffre</li>
+                <li id="rule-special" class="invalid">Au moins 1 caractère spécial</li>
+                <li id="rule-match" class="invalid">Les deux mots de passe doivent être identiques</li>
+            </ul>
+        </div>
 
-  <form action="http://127.0.0.1:5000/register" method="post">
-    <input type="text" name="username" placeholder="Username" required>
-    <input type="password" name="password" placeholder="Password" required>
-    <button>Register</button>
-  </form>
+        <div class="captcha-box">
+            <label class="label">Code captcha</label>
+            <div class="captcha-line">
+                <span class="captcha-code">{{ captcha }}</span>
+            </div>
+            <input type="text" name="captcha_input" placeholder="Recopier le code captcha" required>
+        </div>
+
+        <button type="submit" id="submitBtn" class="btn btn-green full" disabled>
+            Créer le compte
+        </button>
+    </form>
 </div>
 
-</body>
-</html>
+<script>
+const password = document.getElementById("password");
+const confirmPassword = document.getElementById("confirm_password");
+const submitBtn = document.getElementById("submitBtn");
+
+const ruleLength = document.getElementById("rule-length");
+const ruleUppercase = document.getElementById("rule-uppercase");
+const ruleDigit = document.getElementById("rule-digit");
+const ruleSpecial = document.getElementById("rule-special");
+const ruleMatch = document.getElementById("rule-match");
+
+function setRule(element, isValid) {
+    element.classList.remove("valid", "invalid");
+    element.classList.add(isValid ? "valid" : "invalid");
+}
+
+function validatePassword() {
+    const p = password.value;
+    const c = confirmPassword.value;
+
+    const lengthOk = p.length >= 8;
+    const uppercaseOk = /[A-Z]/.test(p);
+    const digitOk = /\d/.test(p);
+    const specialOk = /[^\w\s]/.test(p);
+    const matchOk = p !== "" && p === c;
+
+    setRule(ruleLength, lengthOk);
+    setRule(ruleUppercase, uppercaseOk);
+    setRule(ruleDigit, digitOk);
+    setRule(ruleSpecial, specialOk);
+    setRule(ruleMatch, matchOk);
+
+    submitBtn.disabled = !(lengthOk && uppercaseOk && digitOk && specialOk && matchOk);
+}
+
+password.addEventListener("input", validatePassword);
+confirmPassword.addEventListener("input", validatePassword);
+</script>
+{% endblock %}

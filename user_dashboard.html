@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Mes objets{% endblock %}
+
+{% block content %}
+<div class="section-card">
+    <h2>Bienvenue {{ session.get('full_name') }}</h2>
+    <p>Voici les actions possibles selon les objets ajoutés.</p>
+</div>
+
+<div class="device-grid">
+    {% for device in devices %}
+    <div class="device-card">
+        <h3>{{ device.name }}</h3>
+        <p><strong>Type :</strong> {{ device.type }}</p>
+        <p><strong>Pièce :</strong> {{ device.location }}</p>
+        <p><strong>État :</strong> {{ device.state }}</p>
+        <p><strong>Condition :</strong> {{ device.condition_state }}</p>
+
+        {% if device.type == 'light' %}
+            <a href="{{ url_for('light_control', device_id=device.id) }}" class="btn btn-blue small-btn">Lumière</a>
+        {% elif device.type == 'tv' %}
+            <a href="{{ url_for('tv_control', device_id=device.id) }}" class="btn btn-orange small-btn">Télévision</a>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Modifier objet{% endblock %}
+
+{% block content %}
+<div class="form-card">
+    <h2>Modifier un objet</h2>
+
+    <form method="POST">
+        <input type="text" name="name" value="{{ device.name }}" required>
+
+        <select name="type" required>
+            <option value="light" {% if device.type == 'light' %}selected{% endif %}>Lumière</option>
+            <option value="tv" {% if device.type == 'tv' %}selected{% endif %}>Télévision</option>
+        </select>
+
+        <input type="text" name="location" value="{{ device.location }}" required>
+
+        <select name="state" required>
+            <option value="on" {% if device.state == 'on' %}selected{% endif %}>Allumé</option>
+            <option value="off" {% if device.state == 'off' %}selected{% endif %}>Éteint</option>
+        </select>
+
+        <select name="condition_state" required>
+            <option value="bon_etat" {% if device.condition_state == 'bon_etat' %}selected{% endif %}>Bon état</option>
+            <option value="nouveau" {% if device.condition_state == 'nouveau' %}selected{% endif %}>Nouveau</option>
+            <option value="fragile" {% if device.condition_state == 'fragile' %}selected{% endif %}>Fragile</option>
+            <option value="en_panne" {% if device.condition_state == 'en_panne' %}selected{% endif %}>En panne</option>
+        </select>
+
+        {% if device.type == 'tv' %}
+            <input type="number" name="current_channel" min="1" value="{{ device.current_channel }}">
+        {% else %}
+            <input type="hidden" name="current_channel" value="1">
+        {% endif %}
+
+        <button type="submit" class="btn btn-blue full">Enregistrer</button>
+    </form>
+</div>
+{% endblock %}

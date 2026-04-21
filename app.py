@@ -1,7 +1,8 @@
-from flask import Flask, request, redirect
+from flask import Flask, request, redirect, session
 import sqlite3
 
 app = Flask(__name__)
+app.secret_key = "secret123"
 
 # 🔹 connexion DB
 def get_db():
@@ -36,7 +37,7 @@ def init_db():
     )
     """)
 
-    # créer admin
+    # admin par défaut
     admin = conn.execute("SELECT * FROM users WHERE username='admin'").fetchone()
     if not admin:
         conn.execute(
@@ -54,8 +55,36 @@ init_db()
 def home():
     return """
     <h1>Maison Intelligente</h1>
-    <a href="login.html">Login</a><br>
-    <a href="register.html">Register</a>
+    <a href="/login_page">Login</a><br>
+    <a href="/register_page">Register</a>
+    """
+
+# 🔹 PAGE LOGIN
+@app.route('/login_page')
+def login_page():
+    return """
+    <h2>Login</h2>
+    <form action="/login" method="post">
+        <input name="username" placeholder="Username"><br>
+        <input name="password" type="password" placeholder="Password"><br>
+        <button>Login</button>
+    </form>
+    <br>
+    <a href="/">Retour</a>
+    """
+
+# 🔹 PAGE REGISTER
+@app.route('/register_page')
+def register_page():
+    return """
+    <h2>Register</h2>
+    <form action="/register" method="post">
+        <input name="username" placeholder="Username"><br>
+        <input name="password" type="password" placeholder="Password"><br>
+        <button>Register</button>
+    </form>
+    <br>
+    <a href="/">Retour</a>
     """
 
 # 🔹 REGISTER
@@ -72,7 +101,7 @@ def register():
     conn.commit()
     conn.close()
 
-    return "Inscription réussie (attente validation)"
+    return redirect('/login_page')
 
 # 🔹 LOGIN
 @app.route('/login', methods=['POST'])
@@ -89,7 +118,11 @@ def login():
 
     if user:
         if user["is_validated"] == 0:
-            return "Compte non validé"
+            return "Compte non validé par admin"
+
+        # 🔥 SESSION
+        session['user'] = user['username']
+        session['role'] = user['role']
 
         if user["role"] == "admin":
             return redirect('/admin')
@@ -98,16 +131,18 @@ def login():
 
     return "Identifiants incorrects"
 
-# 🔹 DASHBOARD AVEC OBJETS
+# 🔹 DASHBOARD
 @app.route('/dashboard')
 def dashboard():
+    if 'user' not in session:
+        return redirect('/login_page')
+
     conn = get_db()
     objects = conn.execute("SELECT * FROM objects").fetchall()
     conn.close()
 
-    html = "<h1>Dashboard</h1>"
+    html = f"<h1>Dashboard</h1><p>Bienvenue {session['user']}</p>"
 
-    # afficher objets
     for obj in objects:
         html += f"""
         <p>
@@ -115,7 +150,6 @@ def dashboard():
         </p>
         """
 
-    # formulaire ajout
     html += """
     <h3>Ajouter un objet</h3>
     <form action="/add_object" method="post">
@@ -128,13 +162,18 @@ def dashboard():
     </form>
     """
 
-    html += '<br><a href="/">Retour</a>'
+    html += """
+    <br><a href="/logout">Logout</a>
+    """
 
     return html
 
 # 🔹 AJOUT OBJET
 @app.route('/add_object', methods=['POST'])
 def add_object():
+    if 'user' not in session:
+        return redirect('/login_page')
+
     name = request.form['name']
     type = request.form['type']
     status = request.form['status']
@@ -154,6 +193,9 @@ def add_object():
 # 🔹 ADMIN
 @app.route('/admin')
 def admin():
+    if 'role' not in session or session['role'] != 'admin':
+        return "Accès interdit"
+
     conn = get_db()
     users = conn.execute("SELECT * FROM users").fetchall()
     conn.close()
@@ -175,13 +217,18 @@ def admin():
     </form>
     """
 
-    html += '<br><a href="/">Retour</a>'
+    html += """
+    <br><a href="/logout">Logout</a>
+    """
 
     return html
 
 # 🔹 VALIDATION ADMIN
 @app.route('/admin/validate', methods=['POST'])
 def validate():
+    if 'role' not in session or session['role'] != 'admin':
+        return "Accès interdit"
+
     user_id = request.form['id']
 
     conn = get_db()
@@ -193,6 +240,12 @@ def validate():
     conn.close()
 
     return redirect('/admin')
+
+# 🔹 LOGOUT
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect('/login_page')
 
 # 🔹 RUN
 app.run(debug=True)

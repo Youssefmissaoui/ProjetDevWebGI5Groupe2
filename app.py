@@ -18,11 +18,35 @@ from flask import (
     session,
     flash,
 )
+
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = "smart_home_secret_key_2026"
 DATABASE = "smart_home.db"
+
+
+DEVICE_TYPES = {
+    "light": "Lumière",
+    "tv": "Télévision",
+    "thermostat": "Thermostat",
+    "door": "Porte intelligente",
+    "window": "Fenêtre intelligente",
+    "camera": "Caméra",
+    "alarm": "Alarme",
+    "vacuum": "Robot aspirateur",
+    "oven": "Four intelligent",
+    "washing_machine": "Machine à laver",
+    "fridge": "Réfrigérateur",
+    "coffee_machine": "Machine à café",
+}
+
+CONDITION_STATES = {
+    "bon_etat": "Bon état",
+    "nouveau": "Nouveau",
+    "fragile": "Fragile",
+    "en_panne": "En panne",
+}
 
 
 def get_db_connection():
@@ -81,9 +105,13 @@ def init_db():
             name TEXT NOT NULL,
             type TEXT NOT NULL,
             location TEXT NOT NULL,
-            state TEXT NOT NULL DEFAULT 'off',
             condition_state TEXT NOT NULL DEFAULT 'bon_etat',
-            current_channel INTEGER NOT NULL DEFAULT 1
+            power_state TEXT NOT NULL DEFAULT 'off',
+            action_state TEXT NOT NULL DEFAULT 'idle',
+            primary_value INTEGER NOT NULL DEFAULT 0,
+            secondary_value INTEGER NOT NULL DEFAULT 0,
+            mode TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -116,15 +144,6 @@ def init_db():
 
 
 def send_approval_email(to_email, first_name):
-    """
-    Envoi facultatif.
-    Configure ces variables d'environnement si tu veux un vrai envoi :
-    MAIL_SENDER
-    MAIL_PASSWORD
-    MAIL_SERVER
-    MAIL_PORT
-    SITE_URL
-    """
     sender_email = os.getenv("MAIL_SENDER")
     sender_password = os.getenv("MAIL_PASSWORD")
     smtp_server = os.getenv("MAIL_SERVER", "smtp.gmail.com")
@@ -185,15 +204,402 @@ def admin_required(view_func):
 
 
 def can_control_device(device, role):
-    condition_state = device["condition_state"]
-
-    if condition_state == "en_panne":
+    if device["condition_state"] == "en_panne":
         return False, "Cet objet est en panne. Aucune action n'est autorisée."
 
-    if condition_state in ["fragile", "nouveau"] and role != "admin":
+    if device["condition_state"] in ["fragile", "nouveau"] and role != "admin":
         return False, "Seul l'administrateur peut manipuler un objet fragile ou nouveau."
 
     return True, ""
+
+
+def get_device_defaults(device_type):
+    defaults = {
+        "light": {
+            "power_state": "off",
+            "action_state": "idle",
+            "primary_value": 100,
+            "secondary_value": 0,
+            "mode": "normal",
+        },
+        "tv": {
+            "power_state": "off",
+            "action_state": "idle",
+            "primary_value": 1,   # channel
+            "secondary_value": 10,  # volume
+            "mode": "tv",
+        },
+        "thermostat": {
+            "power_state": "off",
+            "action_state": "idle",
+            "primary_value": 22,   # temperature
+            "secondary_value": 0,
+            "mode": "cool",
+        },
+        "door": {
+            "power_state": "on",
+            "action_state": "closed",
+            "primary_value": 0,
+            "secondary_value": 0,
+            "mode": "locked",
+        },
+        "window": {
+            "power_state": "on",
+            "action_state": "closed",
+            "primary_value": 0,
+            "secondary_value": 0,
+            "mode": "manual",
+        },
+        "camera": {
+            "power_state": "off",
+            "action_state": "inactive",
+            "primary_value": 0,
+            "secondary_value": 0,
+            "mode": "monitoring",
+        },
+        "alarm": {
+            "power_state": "off",
+            "action_state": "disarmed",
+            "primary_value": 0,
+            "secondary_value": 0,
+            "mode": "home",
+        },
+        "vacuum": {
+            "power_state": "off",
+            "action_state": "idle",
+            "primary_value": 100,  # battery
+            "secondary_value": 0,
+            "mode": "auto",
+        },
+        "oven": {
+            "power_state": "off",
+            "action_state": "idle",
+            "primary_value": 180,  # temp
+            "secondary_value": 0,
+            "mode": "bake",
+        },
+        "washing_machine": {
+            "power_state": "off",
+            "action_state": "idle",
+            "primary_value": 60,  # minutes
+            "secondary_value": 0,
+            "mode": "normal",
+        },
+        "fridge": {
+            "power_state": "on",
+            "action_state": "closed",
+            "primary_value": 4,   # temperature
+            "secondary_value": -18,  # freezer
+            "mode": "eco",
+        },
+        "coffee_machine": {
+            "power_state": "off",
+            "action_state": "idle",
+            "primary_value": 1,   # cups
+            "secondary_value": 0,
+            "mode": "espresso",
+        },
+    }
+    return defaults[device_type]
+
+
+def device_summary(device):
+    device_type = device["type"]
+    if device_type == "light":
+        return f"État: {'Allumée' if device['power_state'] == 'on' else 'Éteinte'} | Intensité: {device['primary_value']}%"
+    if device_type == "tv":
+        return f"État: {'Allumée' if device['power_state'] == 'on' else 'Éteinte'} | Chaîne: {device['primary_value']} | Volume: {device['secondary_value']}"
+    if device_type == "thermostat":
+        return f"État: {'Actif' if device['power_state'] == 'on' else 'Arrêt'} | Température: {device['primary_value']}°C | Mode: {device['mode']}"
+    if device_type == "door":
+        return f"Porte: {device['action_state']} | Verrou: {device['mode']}"
+    if device_type == "window":
+        return f"Fenêtre: {device['action_state']}"
+    if device_type == "camera":
+        return f"Caméra: {device['action_state']}"
+    if device_type == "alarm":
+        return f"Alarme: {device['action_state']} | Mode: {device['mode']}"
+    if device_type == "vacuum":
+        return f"Statut: {device['action_state']} | Batterie: {device['primary_value']}%"
+    if device_type == "oven":
+        return f"État: {'Allumé' if device['power_state'] == 'on' else 'Éteint'} | Température: {device['primary_value']}°C | Mode: {device['mode']}"
+    if device_type == "washing_machine":
+        return f"Statut: {device['action_state']} | Durée: {device['primary_value']} min | Programme: {device['mode']}"
+    if device_type == "fridge":
+        return f"Température: {device['primary_value']}°C | Congélateur: {device['secondary_value']}°C | Porte: {device['action_state']}"
+    if device_type == "coffee_machine":
+        return f"État: {'Allumée' if device['power_state'] == 'on' else 'Éteinte'} | Tasses: {device['primary_value']} | Mode: {device['mode']}"
+    return "Objet connecté"
+
+
+def get_device_actions(device):
+    t = device["type"]
+    p = device["power_state"]
+
+    if t == "light":
+        actions = [{"value": "turn_on", "label": "Allumer", "class": "btn-green"}] if p == "off" else [{"value": "turn_off", "label": "Éteindre", "class": "btn-red"}]
+        actions += [{"value": "brightness_up", "label": "Intensité +", "class": "btn-blue"},
+                    {"value": "brightness_down", "label": "Intensité -", "class": "btn-orange"}]
+        return actions
+
+    if t == "tv":
+        actions = [{"value": "turn_on", "label": "Allumer", "class": "btn-green"}] if p == "off" else [{"value": "turn_off", "label": "Éteindre", "class": "btn-red"}]
+        if p == "on":
+            actions += [
+                {"value": "channel_up", "label": "Chaîne +", "class": "btn-blue"},
+                {"value": "channel_down", "label": "Chaîne -", "class": "btn-orange"},
+                {"value": "volume_up", "label": "Volume +", "class": "btn-blue"},
+                {"value": "volume_down", "label": "Volume -", "class": "btn-orange"},
+            ]
+        return actions
+
+    if t == "thermostat":
+        actions = [{"value": "turn_on", "label": "Allumer", "class": "btn-green"}] if p == "off" else [{"value": "turn_off", "label": "Éteindre", "class": "btn-red"}]
+        actions += [
+            {"value": "temp_up", "label": "Température +", "class": "btn-blue"},
+            {"value": "temp_down", "label": "Température -", "class": "btn-orange"},
+            {"value": "mode_heat", "label": "Mode chaud", "class": "btn-blue"},
+            {"value": "mode_cool", "label": "Mode froid", "class": "btn-orange"},
+        ]
+        return actions
+
+    if t == "door":
+        return [
+            {"value": "open", "label": "Ouvrir", "class": "btn-green"},
+            {"value": "close", "label": "Fermer", "class": "btn-red"},
+            {"value": "lock", "label": "Verrouiller", "class": "btn-blue"},
+            {"value": "unlock", "label": "Déverrouiller", "class": "btn-orange"},
+        ]
+
+    if t == "window":
+        return [
+            {"value": "open", "label": "Ouvrir", "class": "btn-green"},
+            {"value": "close", "label": "Fermer", "class": "btn-red"},
+        ]
+
+    if t == "camera":
+        return [
+            {"value": "activate", "label": "Activer", "class": "btn-green"},
+            {"value": "deactivate", "label": "Désactiver", "class": "btn-red"},
+        ]
+
+    if t == "alarm":
+        return [
+            {"value": "arm_home", "label": "Activer maison", "class": "btn-green"},
+            {"value": "arm_away", "label": "Activer absence", "class": "btn-blue"},
+            {"value": "disarm", "label": "Désactiver", "class": "btn-red"},
+        ]
+
+    if t == "vacuum":
+        return [
+            {"value": "start_cleaning", "label": "Démarrer", "class": "btn-green"},
+            {"value": "stop_cleaning", "label": "Arrêter", "class": "btn-red"},
+            {"value": "dock", "label": "Retour base", "class": "btn-blue"},
+        ]
+
+    if t == "oven":
+        actions = [{"value": "turn_on", "label": "Allumer", "class": "btn-green"}] if p == "off" else [{"value": "turn_off", "label": "Éteindre", "class": "btn-red"}]
+        actions += [
+            {"value": "temp_up", "label": "Température +", "class": "btn-blue"},
+            {"value": "temp_down", "label": "Température -", "class": "btn-orange"},
+            {"value": "mode_bake", "label": "Cuisson", "class": "btn-blue"},
+            {"value": "mode_grill", "label": "Grill", "class": "btn-orange"},
+        ]
+        return actions
+
+    if t == "washing_machine":
+        return [
+            {"value": "start_cycle", "label": "Démarrer", "class": "btn-green"},
+            {"value": "pause_cycle", "label": "Pause", "class": "btn-orange"},
+            {"value": "stop_cycle", "label": "Arrêter", "class": "btn-red"},
+            {"value": "program_quick", "label": "Programme rapide", "class": "btn-blue"},
+            {"value": "program_normal", "label": "Programme normal", "class": "btn-blue"},
+        ]
+
+    if t == "fridge":
+        return [
+            {"value": "temp_up", "label": "Température +", "class": "btn-orange"},
+            {"value": "temp_down", "label": "Température -", "class": "btn-blue"},
+            {"value": "open", "label": "Ouvrir porte", "class": "btn-green"},
+            {"value": "close", "label": "Fermer porte", "class": "btn-red"},
+        ]
+
+    if t == "coffee_machine":
+        actions = [{"value": "turn_on", "label": "Allumer", "class": "btn-green"}] if p == "off" else [{"value": "turn_off", "label": "Éteindre", "class": "btn-red"}]
+        if p == "on":
+            actions += [
+                {"value": "brew", "label": "Préparer café", "class": "btn-blue"},
+                {"value": "cups_up", "label": "Tasses +", "class": "btn-blue"},
+                {"value": "cups_down", "label": "Tasses -", "class": "btn-orange"},
+                {"value": "mode_espresso", "label": "Espresso", "class": "btn-blue"},
+                {"value": "mode_lungo", "label": "Lungo", "class": "btn-orange"},
+            ]
+        return actions
+
+    return []
+
+
+def apply_device_action(device, action):
+    d = dict(device)
+
+    if action in ["turn_on", "activate"]:
+        d["power_state"] = "on"
+        if d["type"] == "camera":
+            d["action_state"] = "active"
+        if d["type"] == "coffee_machine":
+            d["action_state"] = "ready"
+
+    elif action in ["turn_off", "deactivate"]:
+        d["power_state"] = "off"
+        if d["type"] == "camera":
+            d["action_state"] = "inactive"
+        if d["type"] == "coffee_machine":
+            d["action_state"] = "idle"
+
+    elif action == "brightness_up":
+        d["primary_value"] = min(100, d["primary_value"] + 10)
+    elif action == "brightness_down":
+        d["primary_value"] = max(0, d["primary_value"] - 10)
+
+    elif action == "channel_up":
+        d["primary_value"] += 1
+    elif action == "channel_down":
+        d["primary_value"] = max(1, d["primary_value"] - 1)
+    elif action == "volume_up":
+        d["secondary_value"] = min(100, d["secondary_value"] + 5)
+    elif action == "volume_down":
+        d["secondary_value"] = max(0, d["secondary_value"] - 5)
+
+    elif action == "temp_up":
+        if d["type"] == "fridge":
+            d["primary_value"] = min(10, d["primary_value"] + 1)
+        else:
+            d["primary_value"] += 1
+    elif action == "temp_down":
+        if d["type"] == "fridge":
+            d["primary_value"] = max(1, d["primary_value"] - 1)
+        else:
+            d["primary_value"] -= 1
+
+    elif action == "mode_heat":
+        d["mode"] = "heat"
+    elif action == "mode_cool":
+        d["mode"] = "cool"
+    elif action == "mode_bake":
+        d["mode"] = "bake"
+    elif action == "mode_grill":
+        d["mode"] = "grill"
+    elif action == "mode_espresso":
+        d["mode"] = "espresso"
+    elif action == "mode_lungo":
+        d["mode"] = "lungo"
+
+    elif action == "open":
+        d["action_state"] = "open"
+    elif action == "close":
+        d["action_state"] = "closed"
+    elif action == "lock":
+        d["mode"] = "locked"
+    elif action == "unlock":
+        d["mode"] = "unlocked"
+
+    elif action == "arm_home":
+        d["power_state"] = "on"
+        d["action_state"] = "armed"
+        d["mode"] = "home"
+    elif action == "arm_away":
+        d["power_state"] = "on"
+        d["action_state"] = "armed"
+        d["mode"] = "away"
+    elif action == "disarm":
+        d["power_state"] = "off"
+        d["action_state"] = "disarmed"
+
+    elif action == "start_cleaning":
+        d["power_state"] = "on"
+        d["action_state"] = "cleaning"
+        d["primary_value"] = max(0, d["primary_value"] - 5)
+    elif action == "stop_cleaning":
+        d["power_state"] = "off"
+        d["action_state"] = "idle"
+    elif action == "dock":
+        d["power_state"] = "on"
+        d["action_state"] = "docked"
+
+    elif action == "start_cycle":
+        d["power_state"] = "on"
+        d["action_state"] = "running"
+    elif action == "pause_cycle":
+        d["power_state"] = "on"
+        d["action_state"] = "paused"
+    elif action == "stop_cycle":
+        d["power_state"] = "off"
+        d["action_state"] = "idle"
+    elif action == "program_quick":
+        d["mode"] = "quick"
+        d["primary_value"] = 30
+    elif action == "program_normal":
+        d["mode"] = "normal"
+        d["primary_value"] = 60
+
+    elif action == "brew":
+        d["action_state"] = "brewing"
+    elif action == "cups_up":
+        d["primary_value"] = min(6, d["primary_value"] + 1)
+    elif action == "cups_down":
+        d["primary_value"] = max(1, d["primary_value"] - 1)
+
+    return d
+
+
+def update_device_in_db(device_id, updated):
+    conn = get_db_connection()
+    conn.execute("""
+        UPDATE devices
+        SET power_state = ?, action_state = ?, primary_value = ?, secondary_value = ?, mode = ?
+        WHERE id = ?
+    """, (
+        updated["power_state"],
+        updated["action_state"],
+        updated["primary_value"],
+        updated["secondary_value"],
+        updated["mode"],
+        device_id
+    ))
+    conn.commit()
+    conn.close()
+
+
+def build_device_query(base_query, search_value, device_type_filter, condition_filter):
+    clauses = []
+    params = []
+
+    if search_value:
+        clauses.append("(name LIKE ? OR location LIKE ?)")
+        like_value = f"%{search_value}%"
+        params.extend([like_value, like_value])
+
+    if device_type_filter:
+        clauses.append("type = ?")
+        params.append(device_type_filter)
+
+    if condition_filter:
+        clauses.append("condition_state = ?")
+        params.append(condition_filter)
+
+    if clauses:
+        base_query += " WHERE " + " AND ".join(clauses)
+
+    base_query += " ORDER BY id DESC"
+    return base_query, params
+
+
+@app.context_processor
+def inject_globals():
+    return {
+        "DEVICE_TYPES": DEVICE_TYPES,
+        "CONDITION_STATES": CONDITION_STATES
+    }
 
 
 @app.route("/")
@@ -255,8 +661,6 @@ def register():
         session["captcha"] = generate_captcha()
         return render_template("register.html", captcha=session["captcha"])
 
-    hashed_password = generate_password_hash(password)
-
     conn = get_db_connection()
     try:
         conn.execute("""
@@ -265,7 +669,14 @@ def register():
                 email, password, role, status
             )
             VALUES (?, ?, ?, ?, ?, ?, 'user', 'pending')
-        """, (first_name, last_name, birth_date, age, email, hashed_password))
+        """, (
+            first_name,
+            last_name,
+            birth_date,
+            age,
+            email,
+            generate_password_hash(password)
+        ))
         conn.commit()
         flash("Compte créé avec succès. En attente de validation par l'administrateur.", "success")
         return redirect(url_for("login"))
@@ -300,11 +711,9 @@ def login():
         if user["status"] == "pending":
             flash("Votre compte est en attente de validation par l'administrateur.", "error")
             return redirect(url_for("login"))
-
         if user["status"] == "rejected":
             flash("Votre compte a été refusé.", "error")
             return redirect(url_for("login"))
-
         if user["status"] == "blocked":
             flash("Votre compte a été bloqué par l'administrateur.", "error")
             return redirect(url_for("login"))
@@ -329,6 +738,10 @@ def logout():
 @app.route("/admin")
 @admin_required
 def admin_dashboard():
+    search_value = request.args.get("search", "").strip()
+    device_type_filter = request.args.get("type", "").strip()
+    condition_filter = request.args.get("condition", "").strip()
+
     conn = get_db_connection()
 
     pending_users = conn.execute("""
@@ -349,10 +762,13 @@ def admin_dashboard():
         ORDER BY id DESC
     """).fetchall()
 
-    devices = conn.execute("""
-        SELECT * FROM devices
-        ORDER BY id DESC
-    """).fetchall()
+    query, params = build_device_query(
+        "SELECT * FROM devices",
+        search_value,
+        device_type_filter,
+        condition_filter
+    )
+    devices = conn.execute(query, params).fetchall()
 
     conn.close()
 
@@ -361,7 +777,11 @@ def admin_dashboard():
         pending_users=pending_users,
         approved_users=approved_users,
         blocked_users=blocked_users,
-        devices=devices
+        devices=devices,
+        search_value=search_value,
+        device_type_filter=device_type_filter,
+        condition_filter=condition_filter,
+        device_summary=device_summary
     )
 
 
@@ -446,15 +866,34 @@ def add_device():
             flash("Tous les champs sont obligatoires.", "error")
             return redirect(url_for("add_device"))
 
-        if device_type not in ["light", "tv"]:
+        if device_type not in DEVICE_TYPES:
             flash("Type d'objet invalide.", "error")
             return redirect(url_for("add_device"))
 
+        if condition_state not in CONDITION_STATES:
+            flash("Condition invalide.", "error")
+            return redirect(url_for("add_device"))
+
+        defaults = get_device_defaults(device_type)
+
         conn = get_db_connection()
         conn.execute("""
-            INSERT INTO devices (name, type, location, state, condition_state, current_channel)
-            VALUES (?, ?, ?, 'off', ?, 1)
-        """, (name, device_type, location, condition_state))
+            INSERT INTO devices (
+                name, type, location, condition_state,
+                power_state, action_state, primary_value, secondary_value, mode
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            name,
+            device_type,
+            location,
+            condition_state,
+            defaults["power_state"],
+            defaults["action_state"],
+            defaults["primary_value"],
+            defaults["secondary_value"],
+            defaults["mode"],
+        ))
         conn.commit()
         conn.close()
 
@@ -462,17 +901,6 @@ def add_device():
         return redirect(url_for("admin_dashboard"))
 
     return render_template("add_device.html")
-
-
-@app.route("/admin/delete-device/<int:device_id>", methods=["POST"])
-@admin_required
-def delete_device(device_id):
-    conn = get_db_connection()
-    conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
-    conn.commit()
-    conn.close()
-    flash("Objet supprimé avec succès.", "success")
-    return redirect(url_for("admin_dashboard"))
 
 
 @app.route("/admin/edit-device/<int:device_id>", methods=["GET", "POST"])
@@ -493,50 +921,36 @@ def edit_device(device_id):
         name = request.form.get("name", "").strip()
         device_type = request.form.get("type", "").strip()
         location = request.form.get("location", "").strip()
-        state = request.form.get("state", "").strip()
         condition_state = request.form.get("condition_state", "").strip()
-        current_channel = request.form.get("current_channel", "1").strip()
+        power_state = request.form.get("power_state", "").strip()
+        action_state = request.form.get("action_state", "").strip()
+        primary_value = request.form.get("primary_value", "0").strip()
+        secondary_value = request.form.get("secondary_value", "0").strip()
+        mode = request.form.get("mode", "").strip()
 
-        if not all([name, device_type, location, state, condition_state]):
+        if not all([name, device_type, location, condition_state, power_state]):
             conn.close()
-            flash("Tous les champs sont obligatoires.", "error")
-            return redirect(url_for("edit_device", device_id=device_id))
-
-        if device_type not in ["light", "tv"]:
-            conn.close()
-            flash("Type d'objet invalide.", "error")
-            return redirect(url_for("edit_device", device_id=device_id))
-
-        if state not in ["on", "off"]:
-            conn.close()
-            flash("État invalide.", "error")
-            return redirect(url_for("edit_device", device_id=device_id))
-
-        if condition_state not in ["bon_etat", "nouveau", "fragile", "en_panne"]:
-            conn.close()
-            flash("Condition invalide.", "error")
+            flash("Champs obligatoires manquants.", "error")
             return redirect(url_for("edit_device", device_id=device_id))
 
         try:
-            current_channel_int = max(1, int(current_channel))
+            primary_value = int(primary_value)
         except ValueError:
-            current_channel_int = 1
+            primary_value = 0
 
-        if device_type != "tv":
-            current_channel_int = 1
+        try:
+            secondary_value = int(secondary_value)
+        except ValueError:
+            secondary_value = 0
 
         conn.execute("""
             UPDATE devices
-            SET name = ?, type = ?, location = ?, state = ?, condition_state = ?, current_channel = ?
+            SET name = ?, type = ?, location = ?, condition_state = ?, power_state = ?,
+                action_state = ?, primary_value = ?, secondary_value = ?, mode = ?
             WHERE id = ?
         """, (
-            name,
-            device_type,
-            location,
-            state,
-            condition_state,
-            current_channel_int,
-            device_id
+            name, device_type, location, condition_state, power_state,
+            action_state, primary_value, secondary_value, mode, device_id
         ))
         conn.commit()
         conn.close()
@@ -548,108 +962,90 @@ def edit_device(device_id):
     return render_template("edit_device.html", device=device)
 
 
+@app.route("/admin/delete-device/<int:device_id>", methods=["POST"])
+@admin_required
+def delete_device(device_id):
+    conn = get_db_connection()
+    conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+    conn.commit()
+    conn.close()
+    flash("Objet supprimé avec succès.", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
 @app.route("/dashboard")
 @login_required
 def user_dashboard():
+    search_value = request.args.get("search", "").strip()
+    device_type_filter = request.args.get("type", "").strip()
+    condition_filter = request.args.get("condition", "").strip()
+
     conn = get_db_connection()
-    devices = conn.execute("""
-        SELECT * FROM devices
-        ORDER BY id DESC
-    """).fetchall()
+    query, params = build_device_query(
+        "SELECT * FROM devices",
+        search_value,
+        device_type_filter,
+        condition_filter
+    )
+    devices = conn.execute(query, params).fetchall()
     conn.close()
-    return render_template("user_dashboard.html", devices=devices)
+
+    return render_template(
+        "user_dashboard.html",
+        devices=devices,
+        search_value=search_value,
+        device_type_filter=device_type_filter,
+        condition_filter=condition_filter,
+        device_summary=device_summary
+    )
 
 
-@app.route("/device/light/<int:device_id>", methods=["GET", "POST"])
+@app.route("/device/<int:device_id>", methods=["GET", "POST"])
 @login_required
-def light_control(device_id):
+def device_control(device_id):
     conn = get_db_connection()
-    device = conn.execute("""
-        SELECT * FROM devices
-        WHERE id = ? AND type = 'light'
-    """, (device_id,)).fetchone()
+    device = conn.execute(
+        "SELECT * FROM devices WHERE id = ?",
+        (device_id,)
+    ).fetchone()
 
     if not device:
         conn.close()
-        flash("Lumière introuvable.", "error")
+        flash("Objet introuvable.", "error")
         return redirect(url_for("user_dashboard"))
 
     allowed, reason = can_control_device(device, session.get("role"))
+    actions = get_device_actions(device)
 
     if request.method == "POST":
         if not allowed:
             conn.close()
             flash(reason, "error")
-            return redirect(url_for("light_control", device_id=device_id))
+            return redirect(url_for("device_control", device_id=device_id))
 
-        action = request.form.get("action")
-        time.sleep(2)
-
-        if action == "on":
-            conn.execute("UPDATE devices SET state = 'on' WHERE id = ?", (device_id,))
-            flash("Action validée : la lumière a été allumée.", "success")
-        elif action == "off":
-            conn.execute("UPDATE devices SET state = 'off' WHERE id = ?", (device_id,))
-            flash("Action validée : la lumière a été éteinte.", "success")
-        else:
-            flash("Action invalide.", "error")
-
-        conn.commit()
-        device = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
-
-    conn.close()
-    return render_template("light.html", device=device, allowed=allowed, reason=reason)
-
-
-@app.route("/device/tv/<int:device_id>", methods=["GET", "POST"])
-@login_required
-def tv_control(device_id):
-    conn = get_db_connection()
-    device = conn.execute("""
-        SELECT * FROM devices
-        WHERE id = ? AND type = 'tv'
-    """, (device_id,)).fetchone()
-
-    if not device:
-        conn.close()
-        flash("Télévision introuvable.", "error")
-        return redirect(url_for("user_dashboard"))
-
-    allowed, reason = can_control_device(device, session.get("role"))
-
-    if request.method == "POST":
-        if not allowed:
-            conn.close()
-            flash(reason, "error")
-            return redirect(url_for("tv_control", device_id=device_id))
-
-        action = request.form.get("action")
-        state = device["state"]
-        channel = device["current_channel"]
-
+        action = request.form.get("action", "").strip()
+        updated = apply_device_action(device, action)
         time.sleep(1)
+        update_device_in_db(device_id, updated)
+        flash("Action validée.", "success")
 
-        if action == "on":
-            state = "on"
-        elif action == "off":
-            state = "off"
-        elif action == "channel_up" and state == "on":
-            channel += 1
-        elif action == "channel_down" and state == "on":
-            channel = max(1, channel - 1)
-
-        conn.execute("""
-            UPDATE devices
-            SET state = ?, current_channel = ?
-            WHERE id = ?
-        """, (state, channel, device_id))
-        conn.commit()
-
+        conn = get_db_connection()
         device = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
-        flash("Télévision mise à jour.", "success")
+        conn.close()
+        actions = get_device_actions(device)
 
-    conn.close()
-    return render_template("tv.html", device=device, allowed=allowed, reason=reason)
+    else:
+        conn.close()
+
+    return render_template(
+        "device_control.html",
+        device=device,
+        allowed=allowed,
+        reason=reason,
+        actions=actions,
+        device_summary=device_summary,
+        device_type_label=DEVICE_TYPES.get(device["type"], device["type"])
+    )
 
 
 if __name__ == "__main__":

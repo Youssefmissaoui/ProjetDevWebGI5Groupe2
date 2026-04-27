@@ -1,18 +1,33 @@
--- Création de la table des utilisateurs
+DROP TABLE IF EXISTS objects;
+DROP TABLE IF EXISTS users;
+
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username VARCHAR(50) UNIQUE NOT NULL,
-    password VARCHAR(255) NOT NULL, -- Le backend devra stocker un mot de passe haché
-    role VARCHAR(20) DEFAULT 'user', -- Peut être 'user' ou 'admin'
-    is_validated BOOLEAN DEFAULT 0 -- 0 (faux/en attente) ou 1 (vrai/validé)
+    username TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    is_validated INTEGER NOT NULL DEFAULT 0
 );
 
--- Création de la table des objets connectés
 CREATE TABLE objects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name VARCHAR(100) NOT NULL,
-    type VARCHAR(50) NOT NULL, -- ex: thermostat, lampe, camera
-    status BOOLEAN DEFAULT 1, -- 1 (actif) ou 0 (inactif)
-    temperature FLOAT NULL, -- Peut être NULL si l'objet n'est pas un thermostat
-    room VARCHAR(50) NOT NULL -- ex: Salon, Chambre, Entrée
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'actif',
+    temperature REAL,
+    room TEXT NOT NULL
 );
+
+-- The Flask app creates the default admin account automatically:
+-- email: admin@smarthome.com
+-- password: Admin123!
+
+INSERT INTO objects (name, type, status, temperature, room) VALUES
+    ('Thermostat Salon', 'thermostat', 'actif', 21.5, 'Salon'),
+    ('Lampe Chambre', 'lampe', 'inactif', NULL, 'Chambre'),
+    ('Camera Entree', 'camera', 'actif', NULL, 'Entree'),
+    ('TV Salon', 'tv', 'actif', NULL, 'Salon'),
+    ('Ventilateur Bureau', 'ventilateur', 'inactif', NULL, 'Bureau'),
+    ('Serrure Porte Entree', 'serrure', 'actif', NULL, 'Entree'),
+    ('Enceinte Cuisine', 'enceinte', 'inactif', NULL, 'Cuisine');

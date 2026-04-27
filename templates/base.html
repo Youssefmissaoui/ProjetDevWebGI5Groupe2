@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Smart Home{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <header class="site-header">
+        <div class="nav-shell">
+            <a class="brand" href="{{ url_for('home') }}">Smart Home</a>
+
+            <nav class="nav-links">
+                <a href="{{ url_for('home') }}">Accueil</a>
+
+                {% if session.get('user_id') %}
+                    <a href="{{ url_for('dashboard') }}">Dashboard</a>
+                    <a href="{{ url_for('add_object') }}">Ajouter un objet</a>
+
+                    {% if session.get('role') == 'admin' %}
+                        <a href="{{ url_for('admin') }}">Admin</a>
+                    {% endif %}
+
+                    <a href="{{ url_for('logout') }}">Deconnexion</a>
+                {% else %}
+                    <a href="{{ url_for('login') }}">Connexion</a>
+                    <a href="{{ url_for('register') }}">Inscription</a>
+                {% endif %}
+            </nav>
+
+            {% if session.get('username') %}
+                <div class="session-pill">
+                    {{ session.get('username') }}
+                    {% if session.get('role') == 'admin' %}
+                        - admin
+                    {% endif %}
+                </div>
+            {% endif %}
+        </div>
+    </header>
+
+    <main class="page-shell">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-stack">
+                    {% for category, message in messages %}
+                        <div class="flash flash-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

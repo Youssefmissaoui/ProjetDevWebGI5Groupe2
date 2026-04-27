@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}Inscription | Smart Home{% endblock %}
+
+{% block content %}
+<section class="auth-layout">
+    <div class="panel auth-card">
+        <p class="eyebrow">Inscription</p>
+        <h1>Creer un compte utilisateur</h1>
+        <p>Le compte sera cree immediatement, puis un admin devra le valider avant la connexion.</p>
+
+        <form method="POST" class="form-grid">
+            <div class="field field-full">
+                <label for="username">Nom d'utilisateur</label>
+                <input
+                    id="username"
+                    name="username"
+                    type="text"
+                    placeholder="ex: equipe_maison"
+                    value="{{ form_data.get('username', '') }}"
+                    required
+                >
+            </div>
+
+            <div class="field field-full">
+                <label for="email">Email</label>
+                <input
+                    id="email"
+                    name="email"
+                    type="email"
+                    placeholder="ex: youssef@email.com"
+                    value="{{ form_data.get('email', '') }}"
+                    required
+                >
+            </div>
+
+            <div class="field field-full">
+                <label for="password">Mot de passe</label>
+                <input
+                    id="password"
+                    name="password"
+                    type="password"
+                    placeholder="8 caracteres, majuscule, chiffre..."
+                    required
+                >
+            </div>
+
+            <div class="field field-full">
+                <label for="confirm_password">Confirmer le mot de passe</label>
+                <input
+                    id="confirm_password"
+                    name="confirm_password"
+                    type="password"
+                    placeholder="Retapez le mot de passe"
+                    required
+                >
+            </div>
+
+            <div class="field field-full">
+                <div class="rules-box">
+                    <strong>Regles du mot de passe</strong>
+                    <ul class="rule-list">
+                        <li id="rule-length" class="rule-bad">Au moins 8 caracteres</li>
+                        <li id="rule-upper" class="rule-bad">Au moins 1 majuscule</li>
+                        <li id="rule-lower" class="rule-bad">Au moins 1 minuscule</li>
+                        <li id="rule-number" class="rule-bad">Au moins 1 chiffre</li>
+                        <li id="rule-special" class="rule-bad">Au moins 1 caractere special</li>
+                        <li id="rule-match" class="rule-bad">Les deux mots de passe doivent etre identiques</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="field field-full">
+                <button type="submit" class="btn btn-secondary">Creer le compte</button>
+            </div>
+        </form>
+
+        <p class="helper-row">
+            Deja inscrit ?
+            <a href="{{ url_for('login') }}">Connexion</a>
+        </p>
+    </div>
+</section>
+
+<script>
+const passwordInput = document.getElementById("password");
+const confirmPasswordInput = document.getElementById("confirm_password");
+
+function setRuleState(element, isValid) {
+    element.classList.remove("rule-ok", "rule-bad");
+    element.classList.add(isValid ? "rule-ok" : "rule-bad");
+}
+
+function updatePasswordRules() {
+    const password = passwordInput.value;
+    const confirmPassword = confirmPasswordInput.value;
+
+    setRuleState(document.getElementById("rule-length"), password.length >= 8);
+    setRuleState(document.getElementById("rule-upper"), /[A-Z]/.test(password));
+    setRuleState(document.getElementById("rule-lower"), /[a-z]/.test(password));
+    setRuleState(document.getElementById("rule-number"), /\d/.test(password));
+    setRuleState(document.getElementById("rule-special"), /[^A-Za-z0-9]/.test(password));
+    setRuleState(document.getElementById("rule-match"), password !== "" && password === confirmPassword);
+}
+
+passwordInput.addEventListener("input", updatePasswordRules);
+confirmPasswordInput.addEventListener("input", updatePasswordRules);
+updatePasswordRules();
+</script>
+{% endblock %}

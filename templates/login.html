@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Connexion | Smart Home{% endblock %}
+
+{% block content %}
+<section class="auth-layout">
+    <div class="panel auth-card">
+        <p class="eyebrow">Connexion</p>
+        <h1>Retrouver vos objets connectes</h1>
+        <p>Entrez votre email ou votre nom d'utilisateur avec votre mot de passe pour acceder au dashboard.</p>
+
+        <form method="POST" class="form-grid">
+            <div class="field field-full">
+                <label for="email">Email ou nom d'utilisateur</label>
+                <input
+                    id="email"
+                    name="email"
+                    type="text"
+                    placeholder="ex: youssef@email.com"
+                    value="{{ email }}"
+                    required
+                >
+            </div>
+
+            <div class="field field-full">
+                <label for="password">Mot de passe</label>
+                <input
+                    id="password"
+                    name="password"
+                    type="password"
+                    placeholder="Votre mot de passe"
+                    required
+                >
+            </div>
+
+            <div class="field field-full">
+                <button type="submit" class="btn btn-primary">Connexion</button>
+            </div>
+        </form>
+
+        <p class="helper-row">
+            Pas encore de compte ?
+            <a href="{{ url_for('register') }}">Inscription</a>
+        </p>
+    </div>
+</section>
+{% endblock %}

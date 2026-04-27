@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Ajouter un objet | Smart Home{% endblock %}
+
+{% block content %}
+<section class="form-layout">
+    <div class="panel form-panel">
+        <p class="eyebrow">Objet</p>
+        <h1>Ajouter un objet connecte</h1>
+        <p>Renseignez le nom, le type, la piece et le statut de l'objet.</p>
+
+        <form method="POST" class="form-grid">
+            <div class="field field-full">
+                <label for="name">Nom</label>
+                <input
+                    id="name"
+                    name="name"
+                    type="text"
+                    placeholder="Ex: Lampe Bureau"
+                    value="{{ form_data.get('name', '') }}"
+                    required
+                >
+            </div>
+
+            <div class="field">
+                <label for="type">Type</label>
+                <select id="type" name="type" required>
+                    {% for object_type in object_types %}
+                        <option value="{{ object_type }}" {% if form_data.get('type', '') == object_type %}selected{% endif %}>
+                            {{ object_type|type_label }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="field">
+                <label for="status">Statut</label>
+                <select id="status" name="status" required>
+                    <option value="actif" {% if form_data.get('status', 'actif') == 'actif' %}selected{% endif %}>Actif</option>
+                    <option value="inactif" {% if form_data.get('status') == 'inactif' %}selected{% endif %}>Inactif</option>
+                </select>
+            </div>
+
+            <div class="field field-full">
+                <label for="room">Piece</label>
+                <input
+                    id="room"
+                    name="room"
+                    type="text"
+                    placeholder="Salon, Chambre, Entree..."
+                    value="{{ form_data.get('room', '') }}"
+                    required
+                >
+            </div>
+
+            <div class="field field-full temp-row" id="temperature-row">
+                <label for="temperature">Temperature</label>
+                <input
+                    id="temperature"
+                    name="temperature"
+                    type="number"
+                    step="0.1"
+                    placeholder="Seulement pour un thermostat"
+                    value="{{ form_data.get('temperature', '') }}"
+                >
+            </div>
+
+            <div class="field field-full">
+                <button type="submit" class="btn btn-primary">Ajouter l'objet</button>
+            </div>
+        </form>
+    </div>
+</section>
+
+<script>
+const typeSelect = document.getElementById("type");
+const temperatureRow = document.getElementById("temperature-row");
+
+function toggleTemperatureField() {
+    temperatureRow.hidden = typeSelect.value !== "thermostat";
+}
+
+typeSelect.addEventListener("change", toggleTemperatureField);
+toggleTemperatureField();
+</script>
+{% endblock %}

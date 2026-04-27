@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Gerer un objet | Smart Home{% endblock %}
+
+{% block content %}
+<section class="panel section-head">
+    <div>
+        <p class="eyebrow">Gestion</p>
+        <h1>{{ object_data.name }}</h1>
+        <p>Controlez l'objet en fonction de son type et de son etat actuel.</p>
+    </div>
+
+    <div class="button-row">
+        <a href="{{ url_for('dashboard') }}" class="btn btn-ghost">Retour dashboard</a>
+        <a href="{{ url_for('edit_object', object_id=object_data.id) }}" class="btn btn-secondary">Modifier</a>
+    </div>
+</section>
+
+<section class="control-layout">
+    <article class="panel control-summary">
+        <div class="object-head">
+            <div>
+                <p class="meta">{{ object_data.type|type_label }}</p>
+                <h3>Etat actuel</h3>
+            </div>
+            <span class="status-badge status-{{ object_data.status }}">{{ object_data.status }}</span>
+        </div>
+
+        <div class="state-display">{{ state_label }}</div>
+
+        <dl class="object-details">
+            <div>
+                <dt>Piece</dt>
+                <dd>{{ object_data.room }}</dd>
+            </div>
+            <div>
+                <dt>Type</dt>
+                <dd>{{ object_data.type|type_label }}</dd>
+            </div>
+            <div>
+                <dt>Statut</dt>
+                <dd>{{ object_data.status }}</dd>
+            </div>
+            <div>
+                <dt>Temperature</dt>
+                <dd>
+                    {% if object_data.temperature is not none %}
+                        {{ "%.1f"|format(object_data.temperature) }} C
+                    {% else %}
+                        --
+                    {% endif %}
+                </dd>
+            </div>
+        </dl>
+    </article>
+
+    <article class="panel control-panel">
+        <p class="eyebrow">Commandes</p>
+        <h3 class="table-title">Actions disponibles</h3>
+        <p class="hint">
+            Exemple: une lampe ou une TV peut etre allumee,
+            un thermostat peut aussi changer de temperature.
+        </p>
+
+        <div class="action-grid">
+            {% for action in actions %}
+                <form method="POST" class="inline-form action-form">
+                    <input type="hidden" name="action" value="{{ action.value }}">
+                    <button type="submit" class="btn {{ action.class }}">{{ action.label }}</button>
+                </form>
+            {% endfor %}
+        </div>
+    </article>
+</section>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Accueil | Smart Home{% endblock %}
+
+{% block content %}
+<section class="panel hero">
+    <p class="eyebrow">Projet maison connectee</p>
+    <h1>Un site simple pour gerer les objets d'une maison intelligente.</h1>
+    <p>
+        Inscription, connexion, validation admin, ajout d'objets,
+        modification, suppression et recherche avec filtres.
+    </p>
+
+    <div class="hero-actions">
+        <a href="{{ url_for('login') }}" class="btn btn-primary">Se connecter</a>
+        <a href="{{ url_for('register') }}" class="btn btn-secondary">Creer un compte</a>
+    </div>
+
+    <p class="helper-row">
+        Compte admin par defaut : <strong>admin@smarthome.com</strong> / <strong>Admin123!</strong>
+    </p>
+
+    <div class="feature-grid">
+        <article class="feature-card">
+            <h3>Connexion simple</h3>
+            <p>Les nouveaux comptes s'inscrivent puis attendent la validation d'un admin.</p>
+        </article>
+        <article class="feature-card">
+            <h3>Objets partages</h3>
+            <p>Thermostat, lampe, camera, TV, enceinte et autres objets sont visibles par les utilisateurs connectes.</p>
+        </article>
+        <article class="feature-card">
+            <h3>CRUD complet</h3>
+            <p>Ajoutez, modifiez et supprimez rapidement les objets depuis le dashboard.</p>
+        </article>
+        <article class="feature-card">
+            <h3>Recherche utile</h3>
+            <p>Barre de recherche + filtres type/statut, avec des requetes comme "thermostat actif".</p>
+        </article>
+    </div>
+</section>
+{% endblock %}

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}Admin | Smart Home{% endblock %}
+
+{% block content %}
+<section class="panel section-head">
+    <div>
+        <p class="eyebrow">Admin</p>
+        <h1>Validation des comptes</h1>
+        <p>Le role admin gere les inscriptions en attente et suit l'etat general du site.</p>
+    </div>
+
+    <div class="button-row">
+        <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Voir le dashboard</a>
+        <a href="{{ url_for('add_object') }}" class="btn btn-primary">Ajouter un objet</a>
+    </div>
+</section>
+
+<section class="stats-grid">
+    <article class="stat-card">
+        <span>Comptes a valider</span>
+        <strong>{{ pending_users|length }}</strong>
+    </article>
+    <article class="stat-card">
+        <span>Comptes valides</span>
+        <strong>{{ validated_users|length }}</strong>
+    </article>
+    <article class="stat-card">
+        <span>Objets en base</span>
+        <strong>{{ total_objects }}</strong>
+    </article>
+</section>
+
+<section class="panel table-section">
+    <h3 class="table-title">Inscriptions en attente</h3>
+
+    {% if pending_users %}
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Username</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in pending_users %}
+                        <tr>
+                            <td>{{ user.id }}</td>
+                            <td>{{ user.username }}</td>
+                            <td>{{ user.email }}</td>
+                            <td>{{ user.role }}</td>
+                            <td>
+                                <form method="POST" action="{{ url_for('validate_user', user_id=user.id) }}" class="inline-form">
+                                    <button type="submit" class="btn btn-success">Valider</button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="empty-state">Aucun compte en attente pour le moment.</p>
+    {% endif %}
+</section>
+
+<section class="panel table-section">
+    <h3 class="table-title">Utilisateurs deja valides</h3>
+
+    {% if validated_users %}
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Username</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>Validation</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in validated_users %}
+                        <tr>
+                            <td>{{ user.id }}</td>
+                            <td>{{ user.username }}</td>
+                            <td>{{ user.email }}</td>
+                            <td>{{ user.role }}</td>
+                            <td>Valide</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="empty-state">Aucun utilisateur valide en dehors de l'admin.</p>
+    {% endif %}
+</section>
+{% endblock %}

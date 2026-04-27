@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Modifier un objet | Smart Home{% endblock %}
+
+{% block content %}
+<section class="form-layout">
+    <div class="panel form-panel">
+        <p class="eyebrow">Objet</p>
+        <h1>Modifier l'objet</h1>
+        <p>Mettez a jour les informations de l'objet puis enregistrez les changements.</p>
+
+        <form method="POST" class="form-grid">
+            <div class="field field-full">
+                <label for="name">Nom</label>
+                <input
+                    id="name"
+                    name="name"
+                    type="text"
+                    value="{{ object_data.name }}"
+                    required
+                >
+            </div>
+
+            <div class="field">
+                <label for="type">Type</label>
+                <select id="type" name="type" required>
+                    {% for object_type in object_types %}
+                        <option value="{{ object_type }}" {% if object_data.type == object_type %}selected{% endif %}>
+                            {{ object_type|type_label }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="field">
+                <label for="status">Statut</label>
+                <select id="status" name="status" required>
+                    <option value="actif" {% if object_data.status == 'actif' %}selected{% endif %}>Actif</option>
+                    <option value="inactif" {% if object_data.status == 'inactif' %}selected{% endif %}>Inactif</option>
+                </select>
+            </div>
+
+            <div class="field field-full">
+                <label for="room">Piece</label>
+                <input
+                    id="room"
+                    name="room"
+                    type="text"
+                    value="{{ object_data.room }}"
+                    required
+                >
+            </div>
+
+            <div class="field field-full temp-row" id="temperature-row">
+                <label for="temperature">Temperature</label>
+                <input
+                    id="temperature"
+                    name="temperature"
+                    type="number"
+                    step="0.1"
+                    value="{{ object_data.temperature if object_data.temperature is not none else '' }}"
+                >
+            </div>
+
+            <div class="field field-full button-row">
+                <button type="submit" class="btn btn-primary">Enregistrer</button>
+                <a href="{{ url_for('dashboard') }}" class="btn btn-ghost">Retour</a>
+            </div>
+        </form>
+    </div>
+</section>
+
+<script>
+const typeSelect = document.getElementById("type");
+const temperatureRow = document.getElementById("temperature-row");
+
+function toggleTemperatureField() {
+    temperatureRow.hidden = typeSelect.value !== "thermostat";
+}
+
+typeSelect.addEventListener("change", toggleTemperatureField);
+toggleTemperatureField();
+</script>
+{% endblock %}

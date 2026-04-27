@@ -1,52 +1,68 @@
-import os
-import re
 import sqlite3
-import smtplib
-import random
-import string
 import time
-from datetime import date, datetime
-from email.mime.text import MIMEText
+import unicodedata
 from functools import wraps
+from pathlib import Path
+import re
 
-from flask import (
-    Flask,
-    render_template,
-    request,
-    redirect,
-    url_for,
-    session,
-    flash,
-)
-
-from werkzeug.security import generate_password_hash, check_password_hash
+from flask import Flask, flash, redirect, render_template, request, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
-app.secret_key = "smart_home_secret_key_2026"
-DATABASE = "smart_home.db"
+app.config["SECRET_KEY"] = "smart-home-secret-2026"
 
+BASE_DIR = Path(__file__).resolve().parent
+DATABASE = BASE_DIR / "smart_home.db"
+ADMIN_EMAIL = "admin@smarthome.com"
+EMAIL_REGEX = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 
-DEVICE_TYPES = {
-    "light": "Lumière",
-    "tv": "Télévision",
+DEFAULT_OBJECT_TYPES = [
+    "thermostat",
+    "lampe",
+    "camera",
+    "alarme",
+    "prise",
+    "capteur",
+    "tv",
+    "ventilateur",
+    "enceinte",
+    "serrure",
+    "volet",
+    "projecteur",
+    "arrosage",
+]
+
+TYPE_LABELS = {
     "thermostat": "Thermostat",
-    "door": "Porte intelligente",
-    "window": "Fenêtre intelligente",
-    "camera": "Caméra",
-    "alarm": "Alarme",
-    "vacuum": "Robot aspirateur",
-    "oven": "Four intelligent",
-    "washing_machine": "Machine à laver",
-    "fridge": "Réfrigérateur",
-    "coffee_machine": "Machine à café",
+    "lampe": "Lampe",
+    "camera": "Camera",
+    "alarme": "Alarme",
+    "prise": "Prise",
+    "capteur": "Capteur",
+    "tv": "TV",
+    "ventilateur": "Ventilateur",
+    "enceinte": "Enceinte",
+    "serrure": "Serrure connectee",
+    "volet": "Volet roulant",
+    "projecteur": "Projecteur",
+    "arrosage": "Arrosage automatique",
+    "light": "Lampe",
+    "door": "Porte",
+    "window": "Fenetre",
+    "vacuum": "Aspirateur",
+    "oven": "Four",
+    "washing_machine": "Machine a laver",
+    "fridge": "Refrigerateur",
+    "coffee_machine": "Machine a cafe",
 }
 
-CONDITION_STATES = {
-    "bon_etat": "Bon état",
-    "nouveau": "Nouveau",
-    "fragile": "Fragile",
-    "en_panne": "En panne",
+LEGACY_TYPE_MAP = {
+    "light": "lampe",
+    "door": "porte",
+    "window": "fenetre",
 }
+
+STATUS_OPTIONS = ["actif", "inactif"]
 
 
 def get_db_connection():
@@ -55,999 +71,1064 @@ def get_db_connection():
     return conn
 
 
-def calculate_age(birth_date_str):
-    birth_date = datetime.strptime(birth_date_str, "%Y-%m-%d").date()
-    today = date.today()
-    age = today.year - birth_date.year - (
-        (today.month, today.day) < (birth_date.month, birth_date.day)
+def normalize_text(value):
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    without_accents = "".join(
+        char for char in normalized if not unicodedata.combining(char)
     )
-    return age
+    return without_accents.lower().strip()
+
+
+def normalize_status_value(value):
+    token = normalize_text(value)
+    if token in {"1", "true", "actif", "on", "active"}:
+        return "actif"
+    return "inactif"
+
+
+def type_label(value):
+    if not value:
+        return "Objet"
+    return TYPE_LABELS.get(value, value.replace("_", " ").title())
+
+
+def is_valid_email(email):
+    return bool(EMAIL_REGEX.fullmatch(email or ""))
 
 
 def password_is_valid(password):
     if len(password) < 8:
-        return False, "Le mot de passe doit contenir au moins 8 caractères."
+        return False, "Le mot de passe doit contenir au moins 8 caracteres."
     if not re.search(r"[A-Z]", password):
         return False, "Le mot de passe doit contenir au moins une majuscule."
+    if not re.search(r"[a-z]", password):
+        return False, "Le mot de passe doit contenir au moins une minuscule."
     if not re.search(r"\d", password):
         return False, "Le mot de passe doit contenir au moins un chiffre."
-    if not re.search(r"[^\w\s]", password):
-        return False, "Le mot de passe doit contenir au moins un caractère spécial."
+    if not re.search(r"[^A-Za-z0-9]", password):
+        return False, "Le mot de passe doit contenir au moins un caractere special."
     return True, ""
 
 
-def generate_captcha(length=5):
-    chars = string.ascii_uppercase + string.digits
-    return "".join(random.choice(chars) for _ in range(length))
+def build_placeholder_email(username, user_id):
+    safe_username = re.sub(r"[^a-z0-9]+", "", normalize_text(username))
+    if not safe_username:
+        safe_username = "user"
+    return f"{safe_username}{user_id}@legacy.local"
 
 
-def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
+def table_exists(conn, table_name):
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
 
-    cursor.execute("""
+
+def table_columns(conn, table_name):
+    rows = conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+    return [row["name"] for row in rows]
+
+
+def rename_legacy_table(conn, table_name):
+    legacy_name = f"{table_name}_legacy_{int(time.time())}"
+    conn.execute(f'ALTER TABLE "{table_name}" RENAME TO "{legacy_name}"')
+
+
+def ensure_expected_schema(conn):
+    required_users = {"id", "username", "email", "password", "role", "is_validated"}
+    required_objects = {"id", "name", "type", "status", "temperature", "room"}
+
+    if table_exists(conn, "users"):
+        user_columns = set(table_columns(conn, "users"))
+        legacy_user_columns = {"id", "username", "password", "role", "is_validated"}
+
+        if required_users.issubset(user_columns):
+            pass
+        elif legacy_user_columns.issubset(user_columns):
+            conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+            rows = conn.execute(
+                "SELECT id, username, role FROM users ORDER BY id ASC"
+            ).fetchall()
+            admin_email_assigned = False
+
+            for row in rows:
+                is_admin_row = row["role"] == "admin" or row["username"] == "admin"
+                if is_admin_row and not admin_email_assigned:
+                    email = ADMIN_EMAIL
+                    admin_email_assigned = True
+                else:
+                    email = build_placeholder_email(row["username"], row["id"])
+                conn.execute(
+                    "UPDATE users SET email = ? WHERE id = ?",
+                    (email, row["id"]),
+                )
+        else:
+            rename_legacy_table(conn, "users")
+
+    if table_exists(conn, "objects"):
+        if not required_objects.issubset(set(table_columns(conn, "objects"))):
+            rename_legacy_table(conn, "objects")
+
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            first_name TEXT NOT NULL,
-            last_name TEXT NOT NULL,
-            birth_date TEXT NOT NULL,
-            age INTEGER NOT NULL,
+            username TEXT UNIQUE NOT NULL,
             email TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'user',
-            status TEXT NOT NULL DEFAULT 'pending'
+            is_validated INTEGER NOT NULL DEFAULT 0
         )
-    """)
+        """
+    )
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS devices (
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS objects (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             type TEXT NOT NULL,
-            location TEXT NOT NULL,
-            condition_state TEXT NOT NULL DEFAULT 'bon_etat',
-            power_state TEXT NOT NULL DEFAULT 'off',
-            action_state TEXT NOT NULL DEFAULT 'idle',
-            primary_value INTEGER NOT NULL DEFAULT 0,
-            secondary_value INTEGER NOT NULL DEFAULT 0,
-            mode TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            status TEXT NOT NULL DEFAULT 'actif',
+            temperature REAL,
+            room TEXT NOT NULL
         )
-    """)
+        """
+    )
 
-    admin_email = "admin@smarthome.com"
-    existing_admin = cursor.execute(
-        "SELECT id FROM users WHERE email = ?",
-        (admin_email,)
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)"
+    )
+
+
+def ensure_default_admin(conn):
+    admin = conn.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE username = ? OR email = ? OR role = 'admin'
+        ORDER BY id ASC
+        LIMIT 1
+        """,
+        ("admin", ADMIN_EMAIL),
     ).fetchone()
 
-    if not existing_admin:
-        cursor.execute("""
-            INSERT INTO users (
-                first_name, last_name, birth_date, age,
-                email, password, role, status
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            "Admin",
-            "System",
-            "2000-01-01",
-            26,
-            admin_email,
-            generate_password_hash("Admin@123"),
-            "admin",
-            "approved"
-        ))
+    if admin:
+        conn.execute(
+            """
+            UPDATE users
+            SET username = ?, email = ?, role = 'admin', is_validated = 1
+            WHERE id = ?
+            """,
+            ("admin", ADMIN_EMAIL, admin["id"]),
+        )
+        return
 
-    conn.commit()
-    conn.close()
+    conn.execute(
+        """
+        INSERT INTO users (username, email, password, role, is_validated)
+        VALUES (?, ?, ?, 'admin', 1)
+        """,
+        ("admin", ADMIN_EMAIL, generate_password_hash("Admin123!")),
+    )
 
 
-def send_approval_email(to_email, first_name):
-    sender_email = os.getenv("MAIL_SENDER")
-    sender_password = os.getenv("MAIL_PASSWORD")
-    smtp_server = os.getenv("MAIL_SERVER", "smtp.gmail.com")
-    smtp_port = int(os.getenv("MAIL_PORT", "587"))
-    site_url = os.getenv("SITE_URL", "http://127.0.0.1:5000")
+def migrate_legacy_devices(conn):
+    if not table_exists(conn, "devices"):
+        return
 
-    if not sender_email or not sender_password:
-        print("Email non envoyé : configuration SMTP absente.")
-        return False
+    objects_count = conn.execute("SELECT COUNT(*) AS total FROM objects").fetchone()["total"]
+    if objects_count:
+        return
 
-    subject = "Votre compte Maison Intelligente a été validé"
-    body = f"""
-Bonjour {first_name},
+    legacy_rows = conn.execute(
+        """
+        SELECT name, type, location, power_state, primary_value
+        FROM devices
+        ORDER BY id ASC
+        """
+    ).fetchall()
 
-Votre compte a été validé par l'administrateur.
+    for row in legacy_rows:
+        object_type = LEGACY_TYPE_MAP.get(row["type"], row["type"])
+        status = normalize_status_value(row["power_state"])
+        temperature = row["primary_value"] if object_type == "thermostat" else None
 
-Vous pouvez maintenant accéder au site avec ce lien :
-{site_url}
+        conn.execute(
+            """
+            INSERT INTO objects (name, type, status, temperature, room)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                row["name"],
+                object_type,
+                status,
+                temperature,
+                row["location"],
+            ),
+        )
 
-Cordialement,
-L'équipe Maison Intelligente
-""".strip()
 
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = subject
-    msg["From"] = sender_email
-    msg["To"] = to_email
+def ensure_sample_objects(conn):
+    sample_objects = [
+        {
+            "name": "Thermostat Salon",
+            "type": "thermostat",
+            "status": "actif",
+            "temperature": 21.5,
+            "room": "Salon",
+        },
+        {
+            "name": "Lampe Chambre",
+            "type": "lampe",
+            "status": "inactif",
+            "temperature": None,
+            "room": "Chambre",
+        },
+        {
+            "name": "Camera Entree",
+            "type": "camera",
+            "status": "actif",
+            "temperature": None,
+            "room": "Entree",
+        },
+        {
+            "name": "TV Salon",
+            "type": "tv",
+            "status": "actif",
+            "temperature": None,
+            "room": "Salon",
+        },
+        {
+            "name": "Ventilateur Bureau",
+            "type": "ventilateur",
+            "status": "inactif",
+            "temperature": None,
+            "room": "Bureau",
+        },
+        {
+            "name": "Serrure Porte Entree",
+            "type": "serrure",
+            "status": "actif",
+            "temperature": None,
+            "room": "Entree",
+        },
+        {
+            "name": "Enceinte Cuisine",
+            "type": "enceinte",
+            "status": "inactif",
+            "temperature": None,
+            "room": "Cuisine",
+        },
+    ]
 
-    try:
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
-            server.starttls()
-            server.login(sender_email, sender_password)
-            server.send_message(msg)
+    for sample in sample_objects:
+        existing = conn.execute(
+            "SELECT id FROM objects WHERE lower(name) = lower(?)",
+            (sample["name"],),
+        ).fetchone()
+        if existing:
+            continue
+
+        conn.execute(
+            """
+            INSERT INTO objects (name, type, status, temperature, room)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                sample["name"],
+                sample["type"],
+                sample["status"],
+                sample["temperature"],
+                sample["room"],
+            ),
+        )
+
+
+def serialize_object(row):
+    temperature = row["temperature"]
+    if temperature in ("", None):
+        parsed_temperature = None
+    else:
+        try:
+            parsed_temperature = float(temperature)
+        except (TypeError, ValueError):
+            parsed_temperature = None
+
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "type": row["type"],
+        "status": normalize_status_value(row["status"]),
+        "temperature": parsed_temperature,
+        "room": row["room"],
+    }
+
+
+def fetch_object_by_id(conn, object_id):
+    row = conn.execute(
+        "SELECT * FROM objects WHERE id = ?",
+        (object_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return serialize_object(row)
+
+
+def get_available_object_types(conn, current_type=""):
+    types = list(DEFAULT_OBJECT_TYPES)
+    rows = conn.execute(
+        """
+        SELECT DISTINCT type
+        FROM objects
+        WHERE type IS NOT NULL AND type <> ''
+        ORDER BY type ASC
+        """
+    ).fetchall()
+
+    for row in rows:
+        value = row["type"].strip()
+        if value and value not in types:
+            types.append(value)
+
+    if current_type and current_type not in types:
+        types.append(current_type)
+
+    return types
+
+
+def object_matches_search(object_data, search_text):
+    tokens = [normalize_text(part) for part in search_text.split() if part.strip()]
+    if not tokens:
         return True
-    except Exception as exc:
-        print("Erreur lors de l'envoi du mail :", exc)
-        return False
+
+    haystack = " ".join(
+        [
+            object_data["name"],
+            object_data["type"],
+            type_label(object_data["type"]),
+            object_data["room"],
+            object_data["status"],
+        ]
+    )
+    normalized_haystack = normalize_text(haystack)
+    return all(token in normalized_haystack for token in tokens)
+
+
+def list_objects(conn, search_text="", type_filter="", status_filter=""):
+    rows = conn.execute("SELECT * FROM objects ORDER BY id DESC").fetchall()
+    objects = [serialize_object(row) for row in rows]
+
+    normalized_type_filter = normalize_text(type_filter)
+    normalized_status_filter = normalize_text(status_filter)
+
+    if normalized_type_filter:
+        objects = [
+            object_data
+            for object_data in objects
+            if normalize_text(object_data["type"]) == normalized_type_filter
+        ]
+
+    if normalized_status_filter:
+        objects = [
+            object_data
+            for object_data in objects
+            if normalize_text(object_data["status"]) == normalized_status_filter
+        ]
+
+    if search_text:
+        objects = [
+            object_data
+            for object_data in objects
+            if object_matches_search(object_data, search_text)
+        ]
+
+    return objects
+
+
+def get_object_state_label(object_data):
+    object_type = normalize_text(object_data["type"])
+    is_active = object_data["status"] == "actif"
+
+    if object_type == "lampe":
+        return "Allumee" if is_active else "Eteinte"
+    if object_type == "tv":
+        return "Allumee" if is_active else "Eteinte"
+    if object_type == "camera":
+        return "Active" if is_active else "Inactive"
+    if object_type == "alarme":
+        return "Armee" if is_active else "Desactivee"
+    if object_type == "prise":
+        return "Sous tension" if is_active else "Coupee"
+    if object_type == "capteur":
+        return "En surveillance" if is_active else "En veille"
+    if object_type == "ventilateur":
+        return "En marche" if is_active else "Arrete"
+    if object_type == "enceinte":
+        return "En lecture" if is_active else "Silencieuse"
+    if object_type == "serrure":
+        return "Verrouillee" if is_active else "Deverrouillee"
+    if object_type == "volet":
+        return "Ouvert" if is_active else "Ferme"
+    if object_type == "projecteur":
+        return "En projection" if is_active else "Eteint"
+    if object_type == "arrosage":
+        return "Arrosage actif" if is_active else "Arroseur coupe"
+    if object_type == "thermostat":
+        return "En marche" if is_active else "Arrete"
+    return "Actif" if is_active else "Inactif"
+
+
+def get_object_actions(object_data):
+    object_type = normalize_text(object_data["type"])
+    is_active = object_data["status"] == "actif"
+
+    if object_type == "thermostat":
+        actions = [
+            {
+                "value": "turn_off" if is_active else "turn_on",
+                "label": "Eteindre" if is_active else "Allumer",
+                "class": "btn-danger" if is_active else "btn-success",
+            }
+        ]
+        if is_active:
+            actions.extend(
+                [
+                    {
+                        "value": "temp_up",
+                        "label": "Temperature +",
+                        "class": "btn-primary",
+                    },
+                    {
+                        "value": "temp_down",
+                        "label": "Temperature -",
+                        "class": "btn-secondary",
+                    },
+                ]
+            )
+        return actions
+
+    if object_type == "lampe":
+        return [
+            {
+                "value": "turn_off" if is_active else "turn_on",
+                "label": "Eteindre" if is_active else "Allumer",
+                "class": "btn-danger" if is_active else "btn-success",
+            }
+        ]
+
+    if object_type == "tv":
+        return [
+            {
+                "value": "turn_off" if is_active else "turn_on",
+                "label": "Eteindre la TV" if is_active else "Allumer la TV",
+                "class": "btn-danger" if is_active else "btn-success",
+            }
+        ]
+
+    if object_type == "camera":
+        return [
+            {
+                "value": "deactivate" if is_active else "activate",
+                "label": "Desactiver" if is_active else "Activer",
+                "class": "btn-danger" if is_active else "btn-success",
+            }
+        ]
+
+    if object_type == "alarme":
+        return [
+            {
+                "value": "disarm" if is_active else "arm",
+                "label": "Desactiver" if is_active else "Armer",
+                "class": "btn-danger" if is_active else "btn-success",
+            }
+        ]
+
+    if object_type == "prise":
+        return [
+            {
+                "value": "turn_off" if is_active else "turn_on",
+                "label": "Couper" if is_active else "Alimenter",
+                "class": "btn-danger" if is_active else "btn-success",
+            }
+        ]
+
+    if object_type == "ventilateur":
+        return [
+            {
+                "value": "turn_off" if is_active else "turn_on",
+                "label": "Arreter" if is_active else "Demarrer",
+                "class": "btn-danger" if is_active else "btn-success",
+            }
+        ]
+
+    if object_type == "enceinte":
+        return [
+            {
+                "value": "stop_playback" if is_active else "play",
+                "label": "Couper la musique" if is_active else "Lancer la musique",
+                "class": "btn-danger" if is_active else "btn-success",
+            }
+        ]
+
+    if object_type == "serrure":
+        return [
+            {
+                "value": "unlock" if is_active else "lock",
+                "label": "Deverrouiller" if is_active else "Verrouiller",
+                "class": "btn-danger" if is_active else "btn-success",
+            }
+        ]
+
+    if object_type == "volet":
+        return [
+            {
+                "value": "close" if is_active else "open",
+                "label": "Fermer" if is_active else "Ouvrir",
+                "class": "btn-danger" if is_active else "btn-success",
+            }
+        ]
+
+    if object_type == "projecteur":
+        return [
+            {
+                "value": "turn_off" if is_active else "turn_on",
+                "label": "Eteindre le projecteur" if is_active else "Allumer le projecteur",
+                "class": "btn-danger" if is_active else "btn-success",
+            }
+        ]
+
+    if object_type == "arrosage":
+        return [
+            {
+                "value": "stop_watering" if is_active else "start_watering",
+                "label": "Couper l'arrosage" if is_active else "Lancer l'arrosage",
+                "class": "btn-danger" if is_active else "btn-success",
+            }
+        ]
+
+    return [
+        {
+            "value": "deactivate" if is_active else "activate",
+            "label": "Desactiver" if is_active else "Activer",
+            "class": "btn-danger" if is_active else "btn-success",
+        }
+    ]
+
+
+def apply_object_action(object_data, action):
+    updated_object = dict(object_data)
+    object_type = normalize_text(object_data["type"])
+
+    if action in {"turn_on", "activate", "arm", "lock", "open", "play", "start_watering"}:
+        updated_object["status"] = "actif"
+        if object_type == "thermostat" and updated_object["temperature"] is None:
+            updated_object["temperature"] = 20.0
+        return updated_object, None
+
+    if action in {"turn_off", "deactivate", "disarm", "unlock", "close", "stop_playback", "stop_watering"}:
+        updated_object["status"] = "inactif"
+        return updated_object, None
+
+    if action == "temp_up":
+        if object_type != "thermostat":
+            return None, "Seul un thermostat peut changer de temperature."
+        if updated_object["status"] != "actif":
+            return None, "Allumez le thermostat avant de regler la temperature."
+
+        current_temperature = updated_object["temperature"]
+        if current_temperature is None:
+            current_temperature = 20.0
+
+        updated_object["temperature"] = min(35.0, round(current_temperature + 0.5, 1))
+        return updated_object, None
+
+    if action == "temp_down":
+        if object_type != "thermostat":
+            return None, "Seul un thermostat peut changer de temperature."
+        if updated_object["status"] != "actif":
+            return None, "Allumez le thermostat avant de regler la temperature."
+
+        current_temperature = updated_object["temperature"]
+        if current_temperature is None:
+            current_temperature = 20.0
+
+        updated_object["temperature"] = max(5.0, round(current_temperature - 0.5, 1))
+        return updated_object, None
+
+    return None, "Action non prise en charge pour cet objet."
+
+
+def validate_object_form(form_data):
+    name = form_data.get("name", "").strip()
+    object_type = form_data.get("type", "").strip().lower()
+    status = normalize_status_value(form_data.get("status", ""))
+    room = form_data.get("room", "").strip()
+    temperature_raw = form_data.get("temperature", "").strip()
+
+    if not name or not object_type or not room:
+        return None, "Tous les champs obligatoires doivent etre remplis."
+
+    if status not in STATUS_OPTIONS:
+        return None, "Le statut choisi est invalide."
+
+    temperature = None
+    if object_type == "thermostat":
+        if not temperature_raw:
+            return None, "La temperature est obligatoire pour un thermostat."
+        try:
+            temperature = float(temperature_raw.replace(",", "."))
+        except ValueError:
+            return None, "La temperature doit etre un nombre valide."
+    elif temperature_raw:
+        try:
+            temperature = float(temperature_raw.replace(",", "."))
+        except ValueError:
+            return None, "La temperature doit etre un nombre valide."
+
+    return {
+        "name": name,
+        "type": object_type,
+        "status": status,
+        "temperature": temperature,
+        "room": room,
+    }, None
 
 
 def login_required(view_func):
     @wraps(view_func)
-    def wrapper(*args, **kwargs):
-        if "user_id" not in session:
-            flash("Veuillez vous connecter.", "error")
+    def wrapped_view(*args, **kwargs):
+        if not session.get("user_id"):
+            flash("Connectez-vous pour acceder a cette page.", "error")
             return redirect(url_for("login"))
         return view_func(*args, **kwargs)
-    return wrapper
+
+    return wrapped_view
 
 
 def admin_required(view_func):
     @wraps(view_func)
-    def wrapper(*args, **kwargs):
-        if "user_id" not in session or session.get("role") != "admin":
-            flash("Accès réservé à l'administrateur.", "error")
-            return redirect(url_for("home"))
+    def wrapped_view(*args, **kwargs):
+        if not session.get("user_id"):
+            flash("Connectez-vous pour acceder a cette page.", "error")
+            return redirect(url_for("login"))
+
+        if session.get("role") != "admin":
+            flash("Acces reserve a l administrateur.", "error")
+            return redirect(url_for("dashboard"))
         return view_func(*args, **kwargs)
-    return wrapper
+
+    return wrapped_view
 
 
-def can_control_device(device, role):
-    if device["condition_state"] == "en_panne":
-        return False, "Cet objet est en panne. Aucune action n'est autorisée."
-
-    if device["condition_state"] in ["fragile", "nouveau"] and role != "admin":
-        return False, "Seul l'administrateur peut manipuler un objet fragile ou nouveau."
-
-    return True, ""
-
-
-def get_device_defaults(device_type):
-    defaults = {
-        "light": {
-            "power_state": "off",
-            "action_state": "idle",
-            "primary_value": 100,
-            "secondary_value": 0,
-            "mode": "normal",
-        },
-        "tv": {
-            "power_state": "off",
-            "action_state": "idle",
-            "primary_value": 1,   # channel
-            "secondary_value": 10,  # volume
-            "mode": "tv",
-        },
-        "thermostat": {
-            "power_state": "off",
-            "action_state": "idle",
-            "primary_value": 22,   # temperature
-            "secondary_value": 0,
-            "mode": "cool",
-        },
-        "door": {
-            "power_state": "on",
-            "action_state": "closed",
-            "primary_value": 0,
-            "secondary_value": 0,
-            "mode": "locked",
-        },
-        "window": {
-            "power_state": "on",
-            "action_state": "closed",
-            "primary_value": 0,
-            "secondary_value": 0,
-            "mode": "manual",
-        },
-        "camera": {
-            "power_state": "off",
-            "action_state": "inactive",
-            "primary_value": 0,
-            "secondary_value": 0,
-            "mode": "monitoring",
-        },
-        "alarm": {
-            "power_state": "off",
-            "action_state": "disarmed",
-            "primary_value": 0,
-            "secondary_value": 0,
-            "mode": "home",
-        },
-        "vacuum": {
-            "power_state": "off",
-            "action_state": "idle",
-            "primary_value": 100,  # battery
-            "secondary_value": 0,
-            "mode": "auto",
-        },
-        "oven": {
-            "power_state": "off",
-            "action_state": "idle",
-            "primary_value": 180,  # temp
-            "secondary_value": 0,
-            "mode": "bake",
-        },
-        "washing_machine": {
-            "power_state": "off",
-            "action_state": "idle",
-            "primary_value": 60,  # minutes
-            "secondary_value": 0,
-            "mode": "normal",
-        },
-        "fridge": {
-            "power_state": "on",
-            "action_state": "closed",
-            "primary_value": 4,   # temperature
-            "secondary_value": -18,  # freezer
-            "mode": "eco",
-        },
-        "coffee_machine": {
-            "power_state": "off",
-            "action_state": "idle",
-            "primary_value": 1,   # cups
-            "secondary_value": 0,
-            "mode": "espresso",
-        },
-    }
-    return defaults[device_type]
-
-
-def device_summary(device):
-    device_type = device["type"]
-    if device_type == "light":
-        return f"État: {'Allumée' if device['power_state'] == 'on' else 'Éteinte'} | Intensité: {device['primary_value']}%"
-    if device_type == "tv":
-        return f"État: {'Allumée' if device['power_state'] == 'on' else 'Éteinte'} | Chaîne: {device['primary_value']} | Volume: {device['secondary_value']}"
-    if device_type == "thermostat":
-        return f"État: {'Actif' if device['power_state'] == 'on' else 'Arrêt'} | Température: {device['primary_value']}°C | Mode: {device['mode']}"
-    if device_type == "door":
-        return f"Porte: {device['action_state']} | Verrou: {device['mode']}"
-    if device_type == "window":
-        return f"Fenêtre: {device['action_state']}"
-    if device_type == "camera":
-        return f"Caméra: {device['action_state']}"
-    if device_type == "alarm":
-        return f"Alarme: {device['action_state']} | Mode: {device['mode']}"
-    if device_type == "vacuum":
-        return f"Statut: {device['action_state']} | Batterie: {device['primary_value']}%"
-    if device_type == "oven":
-        return f"État: {'Allumé' if device['power_state'] == 'on' else 'Éteint'} | Température: {device['primary_value']}°C | Mode: {device['mode']}"
-    if device_type == "washing_machine":
-        return f"Statut: {device['action_state']} | Durée: {device['primary_value']} min | Programme: {device['mode']}"
-    if device_type == "fridge":
-        return f"Température: {device['primary_value']}°C | Congélateur: {device['secondary_value']}°C | Porte: {device['action_state']}"
-    if device_type == "coffee_machine":
-        return f"État: {'Allumée' if device['power_state'] == 'on' else 'Éteinte'} | Tasses: {device['primary_value']} | Mode: {device['mode']}"
-    return "Objet connecté"
-
-
-def get_device_actions(device):
-    t = device["type"]
-    p = device["power_state"]
-
-    if t == "light":
-        actions = [{"value": "turn_on", "label": "Allumer", "class": "btn-green"}] if p == "off" else [{"value": "turn_off", "label": "Éteindre", "class": "btn-red"}]
-        actions += [{"value": "brightness_up", "label": "Intensité +", "class": "btn-blue"},
-                    {"value": "brightness_down", "label": "Intensité -", "class": "btn-orange"}]
-        return actions
-
-    if t == "tv":
-        actions = [{"value": "turn_on", "label": "Allumer", "class": "btn-green"}] if p == "off" else [{"value": "turn_off", "label": "Éteindre", "class": "btn-red"}]
-        if p == "on":
-            actions += [
-                {"value": "channel_up", "label": "Chaîne +", "class": "btn-blue"},
-                {"value": "channel_down", "label": "Chaîne -", "class": "btn-orange"},
-                {"value": "volume_up", "label": "Volume +", "class": "btn-blue"},
-                {"value": "volume_down", "label": "Volume -", "class": "btn-orange"},
-            ]
-        return actions
-
-    if t == "thermostat":
-        actions = [{"value": "turn_on", "label": "Allumer", "class": "btn-green"}] if p == "off" else [{"value": "turn_off", "label": "Éteindre", "class": "btn-red"}]
-        actions += [
-            {"value": "temp_up", "label": "Température +", "class": "btn-blue"},
-            {"value": "temp_down", "label": "Température -", "class": "btn-orange"},
-            {"value": "mode_heat", "label": "Mode chaud", "class": "btn-blue"},
-            {"value": "mode_cool", "label": "Mode froid", "class": "btn-orange"},
-        ]
-        return actions
-
-    if t == "door":
-        return [
-            {"value": "open", "label": "Ouvrir", "class": "btn-green"},
-            {"value": "close", "label": "Fermer", "class": "btn-red"},
-            {"value": "lock", "label": "Verrouiller", "class": "btn-blue"},
-            {"value": "unlock", "label": "Déverrouiller", "class": "btn-orange"},
-        ]
-
-    if t == "window":
-        return [
-            {"value": "open", "label": "Ouvrir", "class": "btn-green"},
-            {"value": "close", "label": "Fermer", "class": "btn-red"},
-        ]
-
-    if t == "camera":
-        return [
-            {"value": "activate", "label": "Activer", "class": "btn-green"},
-            {"value": "deactivate", "label": "Désactiver", "class": "btn-red"},
-        ]
-
-    if t == "alarm":
-        return [
-            {"value": "arm_home", "label": "Activer maison", "class": "btn-green"},
-            {"value": "arm_away", "label": "Activer absence", "class": "btn-blue"},
-            {"value": "disarm", "label": "Désactiver", "class": "btn-red"},
-        ]
-
-    if t == "vacuum":
-        return [
-            {"value": "start_cleaning", "label": "Démarrer", "class": "btn-green"},
-            {"value": "stop_cleaning", "label": "Arrêter", "class": "btn-red"},
-            {"value": "dock", "label": "Retour base", "class": "btn-blue"},
-        ]
-
-    if t == "oven":
-        actions = [{"value": "turn_on", "label": "Allumer", "class": "btn-green"}] if p == "off" else [{"value": "turn_off", "label": "Éteindre", "class": "btn-red"}]
-        actions += [
-            {"value": "temp_up", "label": "Température +", "class": "btn-blue"},
-            {"value": "temp_down", "label": "Température -", "class": "btn-orange"},
-            {"value": "mode_bake", "label": "Cuisson", "class": "btn-blue"},
-            {"value": "mode_grill", "label": "Grill", "class": "btn-orange"},
-        ]
-        return actions
-
-    if t == "washing_machine":
-        return [
-            {"value": "start_cycle", "label": "Démarrer", "class": "btn-green"},
-            {"value": "pause_cycle", "label": "Pause", "class": "btn-orange"},
-            {"value": "stop_cycle", "label": "Arrêter", "class": "btn-red"},
-            {"value": "program_quick", "label": "Programme rapide", "class": "btn-blue"},
-            {"value": "program_normal", "label": "Programme normal", "class": "btn-blue"},
-        ]
-
-    if t == "fridge":
-        return [
-            {"value": "temp_up", "label": "Température +", "class": "btn-orange"},
-            {"value": "temp_down", "label": "Température -", "class": "btn-blue"},
-            {"value": "open", "label": "Ouvrir porte", "class": "btn-green"},
-            {"value": "close", "label": "Fermer porte", "class": "btn-red"},
-        ]
-
-    if t == "coffee_machine":
-        actions = [{"value": "turn_on", "label": "Allumer", "class": "btn-green"}] if p == "off" else [{"value": "turn_off", "label": "Éteindre", "class": "btn-red"}]
-        if p == "on":
-            actions += [
-                {"value": "brew", "label": "Préparer café", "class": "btn-blue"},
-                {"value": "cups_up", "label": "Tasses +", "class": "btn-blue"},
-                {"value": "cups_down", "label": "Tasses -", "class": "btn-orange"},
-                {"value": "mode_espresso", "label": "Espresso", "class": "btn-blue"},
-                {"value": "mode_lungo", "label": "Lungo", "class": "btn-orange"},
-            ]
-        return actions
-
-    return []
-
-
-def apply_device_action(device, action):
-    d = dict(device)
-
-    if action in ["turn_on", "activate"]:
-        d["power_state"] = "on"
-        if d["type"] == "camera":
-            d["action_state"] = "active"
-        if d["type"] == "coffee_machine":
-            d["action_state"] = "ready"
-
-    elif action in ["turn_off", "deactivate"]:
-        d["power_state"] = "off"
-        if d["type"] == "camera":
-            d["action_state"] = "inactive"
-        if d["type"] == "coffee_machine":
-            d["action_state"] = "idle"
-
-    elif action == "brightness_up":
-        d["primary_value"] = min(100, d["primary_value"] + 10)
-    elif action == "brightness_down":
-        d["primary_value"] = max(0, d["primary_value"] - 10)
-
-    elif action == "channel_up":
-        d["primary_value"] += 1
-    elif action == "channel_down":
-        d["primary_value"] = max(1, d["primary_value"] - 1)
-    elif action == "volume_up":
-        d["secondary_value"] = min(100, d["secondary_value"] + 5)
-    elif action == "volume_down":
-        d["secondary_value"] = max(0, d["secondary_value"] - 5)
-
-    elif action == "temp_up":
-        if d["type"] == "fridge":
-            d["primary_value"] = min(10, d["primary_value"] + 1)
-        else:
-            d["primary_value"] += 1
-    elif action == "temp_down":
-        if d["type"] == "fridge":
-            d["primary_value"] = max(1, d["primary_value"] - 1)
-        else:
-            d["primary_value"] -= 1
-
-    elif action == "mode_heat":
-        d["mode"] = "heat"
-    elif action == "mode_cool":
-        d["mode"] = "cool"
-    elif action == "mode_bake":
-        d["mode"] = "bake"
-    elif action == "mode_grill":
-        d["mode"] = "grill"
-    elif action == "mode_espresso":
-        d["mode"] = "espresso"
-    elif action == "mode_lungo":
-        d["mode"] = "lungo"
-
-    elif action == "open":
-        d["action_state"] = "open"
-    elif action == "close":
-        d["action_state"] = "closed"
-    elif action == "lock":
-        d["mode"] = "locked"
-    elif action == "unlock":
-        d["mode"] = "unlocked"
-
-    elif action == "arm_home":
-        d["power_state"] = "on"
-        d["action_state"] = "armed"
-        d["mode"] = "home"
-    elif action == "arm_away":
-        d["power_state"] = "on"
-        d["action_state"] = "armed"
-        d["mode"] = "away"
-    elif action == "disarm":
-        d["power_state"] = "off"
-        d["action_state"] = "disarmed"
-
-    elif action == "start_cleaning":
-        d["power_state"] = "on"
-        d["action_state"] = "cleaning"
-        d["primary_value"] = max(0, d["primary_value"] - 5)
-    elif action == "stop_cleaning":
-        d["power_state"] = "off"
-        d["action_state"] = "idle"
-    elif action == "dock":
-        d["power_state"] = "on"
-        d["action_state"] = "docked"
-
-    elif action == "start_cycle":
-        d["power_state"] = "on"
-        d["action_state"] = "running"
-    elif action == "pause_cycle":
-        d["power_state"] = "on"
-        d["action_state"] = "paused"
-    elif action == "stop_cycle":
-        d["power_state"] = "off"
-        d["action_state"] = "idle"
-    elif action == "program_quick":
-        d["mode"] = "quick"
-        d["primary_value"] = 30
-    elif action == "program_normal":
-        d["mode"] = "normal"
-        d["primary_value"] = 60
-
-    elif action == "brew":
-        d["action_state"] = "brewing"
-    elif action == "cups_up":
-        d["primary_value"] = min(6, d["primary_value"] + 1)
-    elif action == "cups_down":
-        d["primary_value"] = max(1, d["primary_value"] - 1)
-
-    return d
-
-
-def update_device_in_db(device_id, updated):
-    conn = get_db_connection()
-    conn.execute("""
-        UPDATE devices
-        SET power_state = ?, action_state = ?, primary_value = ?, secondary_value = ?, mode = ?
-        WHERE id = ?
-    """, (
-        updated["power_state"],
-        updated["action_state"],
-        updated["primary_value"],
-        updated["secondary_value"],
-        updated["mode"],
-        device_id
-    ))
-    conn.commit()
-    conn.close()
-
-
-def build_device_query(base_query, search_value, device_type_filter, condition_filter):
-    clauses = []
-    params = []
-
-    if search_value:
-        clauses.append("(name LIKE ? OR location LIKE ?)")
-        like_value = f"%{search_value}%"
-        params.extend([like_value, like_value])
-
-    if device_type_filter:
-        clauses.append("type = ?")
-        params.append(device_type_filter)
-
-    if condition_filter:
-        clauses.append("condition_state = ?")
-        params.append(condition_filter)
-
-    if clauses:
-        base_query += " WHERE " + " AND ".join(clauses)
-
-    base_query += " ORDER BY id DESC"
-    return base_query, params
-
-
-@app.context_processor
-def inject_globals():
-    return {
-        "DEVICE_TYPES": DEVICE_TYPES,
-        "CONDITION_STATES": CONDITION_STATES
-    }
+@app.template_filter("type_label")
+def type_label_filter(value):
+    return type_label(value)
 
 
 @app.route("/")
 def home():
-    if "user_id" in session:
+    if session.get("user_id"):
         if session.get("role") == "admin":
-            return redirect(url_for("admin_dashboard"))
-        return redirect(url_for("user_dashboard"))
+            return redirect(url_for("admin"))
+        return redirect(url_for("dashboard"))
     return render_template("home.html")
 
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
-    if "user_id" in session:
-        return redirect(url_for("home"))
+    if session.get("user_id"):
+        return redirect(url_for("dashboard"))
 
-    if request.method == "GET":
-        session["captcha"] = generate_captcha()
-        return render_template("register.html", captcha=session["captcha"])
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+        form_data = {"username": username, "email": email}
 
-    first_name = request.form.get("first_name", "").strip()
-    last_name = request.form.get("last_name", "").strip()
-    birth_date = request.form.get("birth_date", "").strip()
-    email = request.form.get("email", "").strip().lower()
-    password = request.form.get("password", "").strip()
-    confirm_password = request.form.get("confirm_password", "").strip()
-    captcha_input = request.form.get("captcha_input", "").strip().upper()
+        if not username or not email or not password or not confirm_password:
+            flash("Tous les champs sont obligatoires.", "error")
+            return render_template("register.html", form_data=form_data)
 
-    if not all([first_name, last_name, birth_date, email, password, confirm_password, captcha_input]):
-        flash("Tous les champs sont obligatoires.", "error")
-        session["captcha"] = generate_captcha()
-        return render_template("register.html", captcha=session["captcha"])
+        if len(username) < 3 or " " in username:
+            flash("Le nom d utilisateur doit contenir au moins 3 caracteres sans espace.", "error")
+            return render_template("register.html", form_data=form_data)
 
-    try:
-        age = calculate_age(birth_date)
-    except ValueError:
-        flash("Date de naissance invalide.", "error")
-        session["captcha"] = generate_captcha()
-        return render_template("register.html", captcha=session["captcha"])
+        if not is_valid_email(email):
+            flash("Entrez une adresse email valide.", "error")
+            return render_template("register.html", form_data=form_data)
 
-    if age < 12:
-        flash("Il faut avoir au moins 12 ans pour créer un compte.", "error")
-        session["captcha"] = generate_captcha()
-        return render_template("register.html", captcha=session["captcha"])
+        valid_password, password_message = password_is_valid(password)
+        if not valid_password:
+            flash(password_message, "error")
+            return render_template("register.html", form_data=form_data)
 
-    valid_password, message = password_is_valid(password)
-    if not valid_password:
-        flash(message, "error")
-        session["captcha"] = generate_captcha()
-        return render_template("register.html", captcha=session["captcha"])
+        if password != confirm_password:
+            flash("Les deux mots de passe ne correspondent pas.", "error")
+            return render_template("register.html", form_data=form_data)
 
-    if password != confirm_password:
-        flash("La confirmation du mot de passe ne correspond pas.", "error")
-        session["captcha"] = generate_captcha()
-        return render_template("register.html", captcha=session["captcha"])
+        conn = get_db_connection()
+        try:
+            existing_username = conn.execute(
+                "SELECT id FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+            existing_email = conn.execute(
+                "SELECT id FROM users WHERE lower(email) = ?",
+                (email,),
+            ).fetchone()
 
-    if captcha_input != session.get("captcha", ""):
-        flash("Captcha incorrect.", "error")
-        session["captcha"] = generate_captcha()
-        return render_template("register.html", captcha=session["captcha"])
+            if existing_username:
+                flash("Ce nom d utilisateur existe deja.", "error")
+                return render_template("register.html", form_data=form_data)
 
-    conn = get_db_connection()
-    try:
-        conn.execute("""
-            INSERT INTO users (
-                first_name, last_name, birth_date, age,
-                email, password, role, status
+            if existing_email:
+                flash("Cette adresse email existe deja.", "error")
+                return render_template("register.html", form_data=form_data)
+
+            conn.execute(
+                """
+                INSERT INTO users (username, email, password, role, is_validated)
+                VALUES (?, ?, ?, 'user', 0)
+                """,
+                (username, email, generate_password_hash(password)),
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'user', 'pending')
-        """, (
-            first_name,
-            last_name,
-            birth_date,
-            age,
-            email,
-            generate_password_hash(password)
-        ))
-        conn.commit()
-        flash("Compte créé avec succès. En attente de validation par l'administrateur.", "success")
+            conn.commit()
+        finally:
+            conn.close()
+
+        flash("Compte cree. Un admin doit maintenant le valider.", "success")
         return redirect(url_for("login"))
-    except sqlite3.IntegrityError:
-        flash("Cet email existe déjà.", "error")
-        session["captcha"] = generate_captcha()
-        return render_template("register.html", captcha=session["captcha"])
-    finally:
-        conn.close()
+
+    return render_template("register.html", form_data={})
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    if "user_id" in session:
-        return redirect(url_for("home"))
+    if session.get("user_id"):
+        return redirect(url_for("dashboard"))
 
     if request.method == "POST":
-        email = request.form.get("email", "").strip().lower()
-        password = request.form.get("password", "").strip()
+        identifier = request.form.get("email", "").strip()
+        normalized_identifier = identifier.lower()
+        password = request.form.get("password", "")
 
         conn = get_db_connection()
-        user = conn.execute(
-            "SELECT * FROM users WHERE email = ?",
-            (email,)
-        ).fetchone()
-        conn.close()
+        try:
+            user = conn.execute(
+                """
+                SELECT *
+                FROM users
+                WHERE lower(email) = ? OR lower(username) = ?
+                """,
+                (normalized_identifier, normalized_identifier),
+            ).fetchone()
+        finally:
+            conn.close()
 
         if not user or not check_password_hash(user["password"], password):
             flash("Email ou mot de passe incorrect.", "error")
-            return redirect(url_for("login"))
+            return render_template("login.html", email=identifier)
 
-        if user["status"] == "pending":
-            flash("Votre compte est en attente de validation par l'administrateur.", "error")
-            return redirect(url_for("login"))
-        if user["status"] == "rejected":
-            flash("Votre compte a été refusé.", "error")
-            return redirect(url_for("login"))
-        if user["status"] == "blocked":
-            flash("Votre compte a été bloqué par l'administrateur.", "error")
-            return redirect(url_for("login"))
+        if user["role"] != "admin" and not int(user["is_validated"]):
+            flash("Votre compte doit etre valide par un admin avant la connexion.", "error")
+            return render_template("login.html", email=identifier)
 
+        session.clear()
         session["user_id"] = user["id"]
-        session["role"] = user["role"]
-        session["full_name"] = f"{user['first_name']} {user['last_name']}"
+        session["username"] = user["username"]
         session["email"] = user["email"]
+        session["role"] = user["role"]
+        session["is_validated"] = int(user["is_validated"])
 
-        return redirect(url_for("home"))
+        if user["role"] == "admin":
+            return redirect(url_for("admin"))
+        return redirect(url_for("dashboard"))
 
-    return render_template("login.html")
+    return render_template("login.html", email="")
 
 
 @app.route("/logout")
 def logout():
     session.clear()
-    flash("Déconnexion réussie.", "success")
+    flash("Deconnexion reussie.", "success")
     return redirect(url_for("home"))
-
-
-@app.route("/admin")
-@admin_required
-def admin_dashboard():
-    search_value = request.args.get("search", "").strip()
-    device_type_filter = request.args.get("type", "").strip()
-    condition_filter = request.args.get("condition", "").strip()
-
-    conn = get_db_connection()
-
-    pending_users = conn.execute("""
-        SELECT * FROM users
-        WHERE role = 'user' AND status = 'pending'
-        ORDER BY id DESC
-    """).fetchall()
-
-    approved_users = conn.execute("""
-        SELECT * FROM users
-        WHERE role = 'user' AND status = 'approved'
-        ORDER BY id DESC
-    """).fetchall()
-
-    blocked_users = conn.execute("""
-        SELECT * FROM users
-        WHERE role = 'user' AND status = 'blocked'
-        ORDER BY id DESC
-    """).fetchall()
-
-    query, params = build_device_query(
-        "SELECT * FROM devices",
-        search_value,
-        device_type_filter,
-        condition_filter
-    )
-    devices = conn.execute(query, params).fetchall()
-
-    conn.close()
-
-    return render_template(
-        "admin_dashboard.html",
-        pending_users=pending_users,
-        approved_users=approved_users,
-        blocked_users=blocked_users,
-        devices=devices,
-        search_value=search_value,
-        device_type_filter=device_type_filter,
-        condition_filter=condition_filter,
-        device_summary=device_summary
-    )
-
-
-@app.route("/admin/approve/<int:user_id>", methods=["POST"])
-@admin_required
-def approve_user(user_id):
-    conn = get_db_connection()
-    user = conn.execute(
-        "SELECT * FROM users WHERE id = ? AND role = 'user'",
-        (user_id,)
-    ).fetchone()
-
-    if not user:
-        conn.close()
-        flash("Utilisateur introuvable.", "error")
-        return redirect(url_for("admin_dashboard"))
-
-    conn.execute(
-        "UPDATE users SET status = 'approved' WHERE id = ?",
-        (user_id,)
-    )
-    conn.commit()
-    conn.close()
-
-    send_approval_email(user["email"], user["first_name"])
-    flash("Compte validé.", "success")
-    return redirect(url_for("admin_dashboard"))
-
-
-@app.route("/admin/reject/<int:user_id>", methods=["POST"])
-@admin_required
-def reject_user(user_id):
-    conn = get_db_connection()
-    conn.execute(
-        "UPDATE users SET status = 'rejected' WHERE id = ? AND role = 'user'",
-        (user_id,)
-    )
-    conn.commit()
-    conn.close()
-    flash("Compte refusé.", "error")
-    return redirect(url_for("admin_dashboard"))
-
-
-@app.route("/admin/block-user/<int:user_id>", methods=["POST"])
-@admin_required
-def block_user(user_id):
-    conn = get_db_connection()
-    conn.execute(
-        "UPDATE users SET status = 'blocked' WHERE id = ? AND role = 'user'",
-        (user_id,)
-    )
-    conn.commit()
-    conn.close()
-    flash("Utilisateur bloqué.", "success")
-    return redirect(url_for("admin_dashboard"))
-
-
-@app.route("/admin/unblock-user/<int:user_id>", methods=["POST"])
-@admin_required
-def unblock_user(user_id):
-    conn = get_db_connection()
-    conn.execute(
-        "UPDATE users SET status = 'approved' WHERE id = ? AND role = 'user'",
-        (user_id,)
-    )
-    conn.commit()
-    conn.close()
-    flash("Utilisateur débloqué.", "success")
-    return redirect(url_for("admin_dashboard"))
-
-
-@app.route("/admin/add-device", methods=["GET", "POST"])
-@admin_required
-def add_device():
-    if request.method == "POST":
-        name = request.form.get("name", "").strip()
-        device_type = request.form.get("type", "").strip()
-        location = request.form.get("location", "").strip()
-        condition_state = request.form.get("condition_state", "").strip()
-
-        if not all([name, device_type, location, condition_state]):
-            flash("Tous les champs sont obligatoires.", "error")
-            return redirect(url_for("add_device"))
-
-        if device_type not in DEVICE_TYPES:
-            flash("Type d'objet invalide.", "error")
-            return redirect(url_for("add_device"))
-
-        if condition_state not in CONDITION_STATES:
-            flash("Condition invalide.", "error")
-            return redirect(url_for("add_device"))
-
-        defaults = get_device_defaults(device_type)
-
-        conn = get_db_connection()
-        conn.execute("""
-            INSERT INTO devices (
-                name, type, location, condition_state,
-                power_state, action_state, primary_value, secondary_value, mode
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            name,
-            device_type,
-            location,
-            condition_state,
-            defaults["power_state"],
-            defaults["action_state"],
-            defaults["primary_value"],
-            defaults["secondary_value"],
-            defaults["mode"],
-        ))
-        conn.commit()
-        conn.close()
-
-        flash("Objet ajouté avec succès.", "success")
-        return redirect(url_for("admin_dashboard"))
-
-    return render_template("add_device.html")
-
-
-@app.route("/admin/edit-device/<int:device_id>", methods=["GET", "POST"])
-@admin_required
-def edit_device(device_id):
-    conn = get_db_connection()
-    device = conn.execute(
-        "SELECT * FROM devices WHERE id = ?",
-        (device_id,)
-    ).fetchone()
-
-    if not device:
-        conn.close()
-        flash("Objet introuvable.", "error")
-        return redirect(url_for("admin_dashboard"))
-
-    if request.method == "POST":
-        name = request.form.get("name", "").strip()
-        device_type = request.form.get("type", "").strip()
-        location = request.form.get("location", "").strip()
-        condition_state = request.form.get("condition_state", "").strip()
-        power_state = request.form.get("power_state", "").strip()
-        action_state = request.form.get("action_state", "").strip()
-        primary_value = request.form.get("primary_value", "0").strip()
-        secondary_value = request.form.get("secondary_value", "0").strip()
-        mode = request.form.get("mode", "").strip()
-
-        if not all([name, device_type, location, condition_state, power_state]):
-            conn.close()
-            flash("Champs obligatoires manquants.", "error")
-            return redirect(url_for("edit_device", device_id=device_id))
-
-        try:
-            primary_value = int(primary_value)
-        except ValueError:
-            primary_value = 0
-
-        try:
-            secondary_value = int(secondary_value)
-        except ValueError:
-            secondary_value = 0
-
-        conn.execute("""
-            UPDATE devices
-            SET name = ?, type = ?, location = ?, condition_state = ?, power_state = ?,
-                action_state = ?, primary_value = ?, secondary_value = ?, mode = ?
-            WHERE id = ?
-        """, (
-            name, device_type, location, condition_state, power_state,
-            action_state, primary_value, secondary_value, mode, device_id
-        ))
-        conn.commit()
-        conn.close()
-
-        flash("Objet modifié avec succès.", "success")
-        return redirect(url_for("admin_dashboard"))
-
-    conn.close()
-    return render_template("edit_device.html", device=device)
-
-
-@app.route("/admin/delete-device/<int:device_id>", methods=["POST"])
-@admin_required
-def delete_device(device_id):
-    conn = get_db_connection()
-    conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
-    conn.commit()
-    conn.close()
-    flash("Objet supprimé avec succès.", "success")
-    return redirect(url_for("admin_dashboard"))
 
 
 @app.route("/dashboard")
 @login_required
-def user_dashboard():
-    search_value = request.args.get("search", "").strip()
-    device_type_filter = request.args.get("type", "").strip()
-    condition_filter = request.args.get("condition", "").strip()
+def dashboard():
+    search_text = request.args.get("search", "").strip()
+    type_filter = request.args.get("type", "").strip()
+    status_filter = request.args.get("status", "").strip()
 
     conn = get_db_connection()
-    query, params = build_device_query(
-        "SELECT * FROM devices",
-        search_value,
-        device_type_filter,
-        condition_filter
-    )
-    devices = conn.execute(query, params).fetchall()
-    conn.close()
+    try:
+        objects = list_objects(conn, search_text, type_filter, status_filter)
+        object_types = get_available_object_types(conn)
+    finally:
+        conn.close()
+
+    active_count = sum(1 for object_data in objects if object_data["status"] == "actif")
+    inactive_count = sum(1 for object_data in objects if object_data["status"] == "inactif")
 
     return render_template(
-        "user_dashboard.html",
-        devices=devices,
-        search_value=search_value,
-        device_type_filter=device_type_filter,
-        condition_filter=condition_filter,
-        device_summary=device_summary
+        "dashboard.html",
+        objects=objects,
+        object_types=object_types,
+        search_text=search_text,
+        type_filter=type_filter,
+        status_filter=status_filter,
+        active_count=active_count,
+        inactive_count=inactive_count,
     )
 
 
-@app.route("/device/<int:device_id>", methods=["GET", "POST"])
+@app.route("/add_object", methods=["GET", "POST"])
+@app.route("/admin/add-device", methods=["GET", "POST"])
 @login_required
-def device_control(device_id):
+def add_object():
     conn = get_db_connection()
-    device = conn.execute(
-        "SELECT * FROM devices WHERE id = ?",
-        (device_id,)
-    ).fetchone()
+    try:
+        object_types = get_available_object_types(conn)
 
-    if not device:
+        if request.method == "POST":
+            object_data, error_message = validate_object_form(request.form)
+            if error_message:
+                flash(error_message, "error")
+                return render_template(
+                    "add_object.html",
+                    object_types=object_types,
+                    form_data=request.form,
+                )
+
+            conn.execute(
+                """
+                INSERT INTO objects (name, type, status, temperature, room)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    object_data["name"],
+                    object_data["type"],
+                    object_data["status"],
+                    object_data["temperature"],
+                    object_data["room"],
+                ),
+            )
+            conn.commit()
+
+            flash("Objet ajoute avec succes.", "success")
+            return redirect(url_for("dashboard"))
+    finally:
         conn.close()
-        flash("Objet introuvable.", "error")
-        return redirect(url_for("user_dashboard"))
 
-    allowed, reason = can_control_device(device, session.get("role"))
-    actions = get_device_actions(device)
+    return render_template("add_object.html", object_types=object_types, form_data={})
 
-    if request.method == "POST":
-        if not allowed:
-            conn.close()
-            flash(reason, "error")
-            return redirect(url_for("device_control", device_id=device_id))
 
-        action = request.form.get("action", "").strip()
-        updated = apply_device_action(device, action)
-        time.sleep(1)
-        update_device_in_db(device_id, updated)
-        flash("Action validée.", "success")
+@app.route("/edit_object/<int:object_id>", methods=["GET", "POST"])
+@app.route("/admin/edit-device/<int:object_id>", methods=["GET", "POST"])
+@login_required
+def edit_object(object_id):
+    conn = get_db_connection()
+    try:
+        object_data = fetch_object_by_id(conn, object_id)
+        if not object_data:
+            flash("Objet introuvable.", "error")
+            return redirect(url_for("dashboard"))
 
-        conn = get_db_connection()
-        device = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
-        conn.close()
-        actions = get_device_actions(device)
+        object_types = get_available_object_types(conn, object_data["type"])
 
-    else:
+        if request.method == "POST":
+            updated_object, error_message = validate_object_form(request.form)
+            if error_message:
+                flash(error_message, "error")
+                fallback_object = {
+                    "id": object_id,
+                    "name": request.form.get("name", "").strip(),
+                    "type": request.form.get("type", "").strip().lower(),
+                    "status": normalize_status_value(request.form.get("status", "")),
+                    "temperature": request.form.get("temperature", "").strip(),
+                    "room": request.form.get("room", "").strip(),
+                }
+                return render_template(
+                    "edit_object.html",
+                    object_data=fallback_object,
+                    object_types=object_types,
+                )
+
+            conn.execute(
+                """
+                UPDATE objects
+                SET name = ?, type = ?, status = ?, temperature = ?, room = ?
+                WHERE id = ?
+                """,
+                (
+                    updated_object["name"],
+                    updated_object["type"],
+                    updated_object["status"],
+                    updated_object["temperature"],
+                    updated_object["room"],
+                    object_id,
+                ),
+            )
+            conn.commit()
+
+            flash("Objet modifie avec succes.", "success")
+            return redirect(url_for("dashboard"))
+    finally:
         conn.close()
 
     return render_template(
-        "device_control.html",
-        device=device,
-        allowed=allowed,
-        reason=reason,
-        actions=actions,
-        device_summary=device_summary,
-        device_type_label=DEVICE_TYPES.get(device["type"], device["type"])
+        "edit_object.html",
+        object_data=object_data,
+        object_types=object_types,
     )
+
+
+@app.route("/delete_object/<int:object_id>", methods=["POST"])
+@app.route("/admin/delete-device/<int:object_id>", methods=["POST"])
+@login_required
+def delete_object(object_id):
+    conn = get_db_connection()
+    try:
+        deleted = conn.execute(
+            "DELETE FROM objects WHERE id = ?",
+            (object_id,),
+        )
+        conn.commit()
+        deleted_rows = deleted.rowcount
+    finally:
+        conn.close()
+
+    if deleted_rows:
+        flash("Objet supprime avec succes.", "success")
+    else:
+        flash("Objet introuvable.", "error")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/object/<int:object_id>", methods=["GET", "POST"])
+@app.route("/device/<int:object_id>", methods=["GET", "POST"])
+@login_required
+def control_object(object_id):
+    conn = get_db_connection()
+    try:
+        object_data = fetch_object_by_id(conn, object_id)
+        if not object_data:
+            flash("Objet introuvable.", "error")
+            return redirect(url_for("dashboard"))
+
+        if request.method == "POST":
+            action = request.form.get("action", "").strip()
+            updated_object, error_message = apply_object_action(object_data, action)
+
+            if error_message:
+                flash(error_message, "error")
+            else:
+                conn.execute(
+                    """
+                    UPDATE objects
+                    SET status = ?, temperature = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        updated_object["status"],
+                        updated_object["temperature"],
+                        object_id,
+                    ),
+                )
+                conn.commit()
+                flash("Action appliquee avec succes.", "success")
+
+            return redirect(url_for("control_object", object_id=object_id))
+    finally:
+        conn.close()
+
+    return render_template(
+        "control_object.html",
+        object_data=object_data,
+        state_label=get_object_state_label(object_data),
+        actions=get_object_actions(object_data),
+    )
+
+
+@app.route("/admin")
+@admin_required
+def admin():
+    conn = get_db_connection()
+    try:
+        pending_users = conn.execute(
+            """
+            SELECT id, username, email, role, is_validated
+            FROM users
+            WHERE role = 'user' AND is_validated = 0
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
+        validated_users = conn.execute(
+            """
+            SELECT id, username, email, role, is_validated
+            FROM users
+            WHERE role = 'user' AND is_validated = 1
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
+        total_objects = conn.execute(
+            "SELECT COUNT(*) AS total FROM objects"
+        ).fetchone()["total"]
+    finally:
+        conn.close()
+
+    return render_template(
+        "admin.html",
+        pending_users=pending_users,
+        validated_users=validated_users,
+        total_objects=total_objects,
+    )
+
+
+@app.route("/admin/validate/<int:user_id>", methods=["POST"])
+@app.route("/admin/approve/<int:user_id>", methods=["POST"])
+@admin_required
+def validate_user(user_id):
+    conn = get_db_connection()
+    try:
+        result = conn.execute(
+            """
+            UPDATE users
+            SET is_validated = 1
+            WHERE id = ? AND role = 'user'
+            """,
+            (user_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    if result.rowcount:
+        flash("Compte valide avec succes.", "success")
+    else:
+        flash("Utilisateur introuvable.", "error")
+    return redirect(url_for("admin"))
+
+
+def init_db():
+    conn = get_db_connection()
+    try:
+        ensure_expected_schema(conn)
+        ensure_default_admin(conn)
+        migrate_legacy_devices(conn)
+        ensure_sample_objects(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+init_db()
 
 
 if __name__ == "__main__":
-    init_db()
     app.run(debug=True)

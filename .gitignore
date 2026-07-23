@@ -1,0 +1,8 @@
+.Rhistory
+.tmp-flask.out.txt
+.tmp-flask.err.txt
+__pycache__/
+*.py[cod]
+.chrome-screenshots-profile/
+Thumbs.db
+.DS_Store
